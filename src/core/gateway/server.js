@@ -10,6 +10,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { WebSocketServer, WebSocket } = require('ws');
+const { spawn } = require('child_process');
 
 const PORT = process.env.PORT || 8087;
 const VNC_HOST = process.env.VNC_HOST || '127.0.0.1';
@@ -70,6 +71,7 @@ function authed(req) {
 }
 
 app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '2mb' }));
 const router = express.Router();
 
 // ---- Login (under BASE) ----
@@ -121,6 +123,36 @@ router.get('/', (req, res) => {
 });
 
 router.get('/logout', (req, res) => { res.setHeader('Set-Cookie', 'ndauth=; HttpOnly; Path=/; Max-Age=0'); res.redirect(BASE + '/login'); });
+
+// ---- Clipboard (under BASE): write text into the virtual desktop's X
+// CLIPBOARD selection so the remote Chrome can paste it with Ctrl+V. ----
+const XVFB_DISPLAY = process.env.NEXDESK_DISPLAY || ':99';
+function setXClipboard(text, cb){
+  // Drop any previous clipboard owner so the newest copy wins (ignore no-match).
+  try { const pk = spawn('pkill', ['-9', '-f', 'xclip -selection clipboard']); pk.on('error', () => {}); } catch (e) {}
+  const child = spawn('xclip', ['-selection', 'clipboard', '-i'], {
+    env: Object.assign({}, process.env, { DISPLAY: XVFB_DISPLAY }),
+    stdio: ['pipe', 'ignore', 'ignore']
+  });
+  let failed = false;
+  child.on('error', (e) => { failed = true; cb(e); });
+  child.stdin.on('error', () => {});
+  try { child.stdin.write(text); } catch (e) { failed = true; return cb(e); }
+  child.stdin.end();
+  // The xclip process stays alive owning the selection; answer once bytes are handed off.
+  setTimeout(() => { if (!failed) cb(null); }, 150);
+}
+router.post('/clipboard', (req, res) => {
+  if (!authed(req)) return res.status(401).end();
+  const text = (req.body && typeof req.body.text === 'string') ? req.body.text : '';
+  if (!text) return res.status(400).json({ ok: false, error: 'empty' });
+  L.info('clipboard set bytes=' + Buffer.byteLength(text, 'utf8') + ' from ' + req.socket.remoteAddress);
+  setXClipboard(text, (err) => {
+    if (err) { L.warn('clipboard set error', err.message); return res.status(500).json({ ok:false, error: err.message }); }
+    res.json({ ok: true });
+  });
+});
+
 
 // ---- noVNC static assets (under BASE) ----
 router.use('/novnc', (req, res, next) => {

@@ -80,6 +80,26 @@
           border:1px solid rgba(255,107,107,.35);padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.5}
   .retry{margin-top:14px}
   /* ---------- responsive ---------- */
+  /* ---------- clipboard panel ---------- */
+  .clip{position:absolute;right:14px;bottom:14px;width:320px;max-width:calc(100vw - 28px);
+        background:rgba(15,15,26,.95);border:1px solid var(--chrome-border);border-radius:14px;
+        backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);z-index:30;overflow:hidden;
+        box-shadow:0 18px 50px rgba(0,0,0,.5);transition:opacity .18s ease, transform .18s ease}
+  .clip.hidden{opacity:0;pointer-events:none;transform:translateY(8px)}
+  .clip-head{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;
+             border-bottom:1px solid var(--chrome-border);font-size:13px;font-weight:700}
+  .clip-x{border:0;background:transparent;color:var(--ink-dim);font-size:19px;line-height:1;cursor:pointer;padding:0 4px}
+  .clip-x:hover{color:var(--ink)}
+  .clip textarea{display:block;width:100%;height:96px;resize:none;border:0;border-bottom:1px solid var(--chrome-border);
+        background:rgba(255,255,255,.04);color:var(--ink);padding:10px 12px;font-size:13px;line-height:1.5}
+  .clip textarea:focus{outline:none}
+  .clip-status{padding:8px 12px 0;font-size:11px;min-height:16px;line-height:1.4}
+  .clip-status.ok{color:var(--ok)} .clip-status.err{color:var(--err)}
+  .clip-actions{display:flex;gap:8px;padding:10px 12px}
+  .clip-actions .btn{flex:1;justify-content:center}
+  .clip-tip{padding:0 12px 11px;font-size:11px;color:var(--ink-dim);line-height:1.5}
+  .btn.primary{background:linear-gradient(135deg,var(--brand),var(--brand2));border:0;color:#fff}
+  .btn.primary:hover{filter:brightness(1.08);background:linear-gradient(135deg,var(--brand),var(--brand2))}
   @media (max-width:640px){
     #topbar{height:48px;padding:0 8px}
     #status{max-width:32vw}
@@ -104,7 +124,7 @@
     <div class="hint" id="hint">tap to show controls</div>
     <button class="btn hide-sm" id="btnFit" title="Fit / actual size"><svg class="ic" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg><span id="fitLbl">Fit</span></button>
     <button class="btn" id="btnFull" title="Fullscreen"><svg class="ic" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg></button>
-    <button class="btn" id="btnKeys" title="Send Ctrl+Alt+Del"><svg class="ic" viewBox="0 0 24 24"><path d="M20 13H4a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-5a1 1 0 0 0-1-1z"/><path d="M2 6h20v4H2z"/><circle cx="6" cy="21" r="1.6" fill="currentColor" stroke="none"/><circle cx="18" cy="21" r="1.6" fill="currentColor" stroke="none"/></svg></button>
+    <button class="btn" id="btnClip" title="Clipboard — paste text between your computer and the virtual desktop"><svg class="ic" viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg></button>
     <button class="btn" id="btnRefresh" title="Reconnect"><svg class="ic" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg></button>
     <a class="btn danger" id="btnLogout" href="logout" title="Log out">Log out</a>
   </div>
@@ -119,6 +139,16 @@
         <div id="errBox"></div>
         <button class="btn retry" id="btnRetry">Try again</button>
       </div>
+    </div>
+    <div id="clipPanel" class="clip hidden">
+      <div class="clip-head"><span>Clipboard</span><button class="clip-x" id="clipClose" title="Close">&times;</button></div>
+      <textarea id="clipText" placeholder="Clipboard text — received from the virtual desktop, or paste here…"></textarea>
+      <div class="clip-status ok" id="clipStatus"></div>
+      <div class="clip-actions">
+        <button class="btn" id="clipReceive">Get from my device</button>
+        <button class="btn primary" id="clipPaste">Paste into virtual desktop</button>
+      </div>
+      <div class="clip-tip">Copy on your computer, open this panel, then press “Paste into virtual desktop”. If it can’t read your device clipboard automatically, click the box and press Ctrl+V, then Paste.</div>
     </div>
   </div>
 </div>
@@ -176,6 +206,13 @@
       return showError('Could not start viewer: ' + err.message);
     }
     rfb.scaleViewport = fitMode;
+    rfb.addEventListener('clipboard', (e) => {
+      const t = e.detail && e.detail.text;
+      if(t !== undefined && t !== null && t !== ''){
+        clipText.value = t;
+        clipMsg('Text received from the virtual desktop.');
+      }
+    });
     rfb.addEventListener('connect', () => setState('connected', 'Connected — you are in your private desktop'));
     rfb.addEventListener('disconnect', (e) => {
       const clean = e.detail ? e.detail.clean : false;
@@ -229,7 +266,74 @@
   $('btnFit').addEventListener('click', toggleFit);
   $('btnRefresh').addEventListener('click', connect);
   $('btnRetry').addEventListener('click', connect);
-  $('btnKeys').addEventListener('click', () => { if(rfb) rfb.sendCtrlAltDel(); });
+  // ----- clipboard bridge (device <-> virtual desktop) -----
+  const clipPanel = $('clipPanel'), clipText = $('clipText'), clipStatus = $('clipStatus');
+  function clipMsg(m, isErr){
+    clipStatus.textContent = m;
+    clipStatus.className = 'clip-status ' + (isErr ? 'err' : 'ok');
+    clearTimeout(clipMsg._t);
+    clipMsg._t = setTimeout(() => { clipStatus.textContent = ''; }, 6000);
+  }
+  function deviceClipboardText(){
+    if(navigator.clipboard && navigator.clipboard.readText){
+      return navigator.clipboard.readText().catch(() => Promise.resolve(null));
+    }
+    return Promise.resolve(null);
+  }
+  async function receiveFromDevice(){
+    const t = await deviceClipboardText();
+    if(t !== null && t !== undefined && t !== ''){
+      clipText.value = t;
+      clipMsg('Loaded text copied on your computer.');
+    } else {
+      clipMsg('Could not read your device clipboard automatically — click the box, press Ctrl+V, then Paste.', true);
+    }
+  }
+  async function pasteToDesktop(){
+    if(!rfb){ clipMsg('Not connected yet.', true); return; }
+    let txt = clipText.value;
+    if(!txt){ txt = (await deviceClipboardText()) || ''; }
+    if(!txt){ clipMsg('No text yet — copy on your computer, or type it in the box.', true); return; }
+    clipText.value = txt;
+    clipMsg('Sending to the virtual desktop…');
+    // 1) place the text on the desktop's own X clipboard via the gateway,
+    //    falling back to noVNC's clipboard message if the endpoint is unreachable
+    let ok = false;
+    try {
+      const url = location.origin + '/' + webpath + '/clipboard';
+      const r = await fetch(url, { method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: txt }) });
+      if (r.ok) { ok = true; } else { throw new Error('http ' + r.status); }
+    } catch (e) {
+      try { rfb.clipboardPasteFrom(txt); ok = true; } catch (e2) { ok = false; }
+    }
+    // 2) focus the virtual desktop field and press Ctrl+V so the text lands there
+    setTimeout(() => {
+      try {
+        rfb.sendKey(0xFFE3, 'ControlLeft', true);
+        rfb.sendKey(0x76, 'KeyV', true);
+        rfb.sendKey(0x76, 'KeyV', false);
+        rfb.sendKey(0xFFE3, 'ControlLeft', false);
+        clipMsg(ok ? 'Pasted into the virtual desktop.' : 'Clipboard sent — press Ctrl+V in the virtual page.');
+      } catch (e) {
+        clipMsg(ok ? 'Clipboard sent — press Ctrl+V in the virtual page.' : 'Could not paste.', true);
+      }
+    }, 300);
+  }
+  function toggleClip(){
+    const hidden = clipPanel.classList.toggle('hidden');
+    if(!hidden){ receiveFromDevice(); }
+  }
+  $('btnClip').addEventListener('click', toggleClip);
+  $('clipClose').addEventListener('click', () => clipPanel.classList.add('hidden'));
+  $('clipPaste').addEventListener('click', pasteToDesktop);
+  $('clipReceive').addEventListener('click', receiveFromDevice);
+  document.addEventListener('pointerdown', (ev) => {
+    if(clipPanel.classList.contains('hidden')) return;
+    if(clipPanel.contains(ev.target) || ev.target.id === 'btnClip') return;
+    clipPanel.classList.add('hidden');
+  });
   document.addEventListener('fullscreenchange', () => {
     const fs = !!document.fullscreenElement;
     $('btnFull').innerHTML = fs
