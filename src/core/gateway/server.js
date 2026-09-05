@@ -14,7 +14,7 @@ const VNC_PORT = parseInt(process.env.VNC_PORT || '5900', 10);
 const NOVNC_DIR = process.env.NOVNC_DIR || '/usr/share/novnc';
 const PASS_FILE = process.env.PASS_FILE || '/opt/nexdesk/config/pass.txt';
 const WEBPATH_FILE = process.env.WEBPATH_FILE || '/opt/nexdesk/config/webpath.txt';
-const SECRET_FILE = '/opt/nexdesk/.secret';
+const SECRET_FILE = process.env.SECRET_FILE || '/opt/nexdesk/.secret';
 
 function readFirstLine(p) { try { return fs.readFileSync(p, 'utf8').split('\n')[0].trim(); } catch (e) { return ''; } }
 const SECRET = readFirstLine(SECRET_FILE) || crypto.randomBytes(16).toString('hex');
