@@ -4,3 +4,4 @@ logs/
 config/pass.txt
 config/webpath.txt
 *.log
+.chrome/

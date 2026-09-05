@@ -200,7 +200,7 @@ Requires=nexdesk-display.service
 Type=simple
 User=${NX_USER}
 Environment=DISPLAY=:${DISPLAY_NUM}
-ExecStart=${BROWSER_BIN} --no-sandbox --user-data-dir=${NX_DIR}/.chrome --window-size=${BROWSER_RES} --window-position=0,0 ${BROWSER_OPTS} about:blank
+ExecStart=${BROWSER_BIN} --user-data-dir=${NX_DIR}/.chrome --window-size=${BROWSER_RES} --window-position=0,0 ${BROWSER_OPTS} about:blank
 Restart=always
 RestartSec=3
 [Install]
@@ -224,6 +224,7 @@ Environment=NOVNC_DIR=/usr/share/novnc
 Environment=PASS_FILE=${NX_DIR}/config/pass.txt
 Environment=WEBPATH_FILE=${NX_DIR}/config/webpath.txt
 Environment=SECRET_FILE=${NX_DIR}/.secret
+Environment=VIEWER_FILE=${NX_DIR}/src/core/gateway/viewer.html
 ExecStart=/usr/bin/node ${NX_DIR}/src/core/gateway/server.js
 Restart=always
 RestartSec=2

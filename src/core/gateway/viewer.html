@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#07070d">
+<title>NexDesk · Virtual Browser</title>
+<link rel="icon" type="image/png" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%237c5cff'/><text x='16' y='22' font-family='Arial' font-weight='bold' font-size='18' fill='white' text-anchor='middle'>N</text></svg>">
+<style>
+  :root{
+    --bg:#07070d;
+    --chrome:rgba(13,13,24,.82);
+    --chrome-border:rgba(255,255,255,.08);
+    --ink:#eef0ff;
+    --ink-dim:#9aa0c4;
+    --brand:#7c5cff;
+    --brand2:#39d0ff;
+    --ok:#3ecf8e;
+    --warn:#f6c453;
+    --err:#ff6b6b;
+    --radius:12px;
+    --sat:env(safe-area-inset-top, 0px);
+    --sab:env(safe-area-inset-bottom, 0px);
+    --sal:env(safe-area-inset-left, 0px);
+    --sar:env(safe-area-inset-right, 0px);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;margin:0;background:var(--bg);overflow:hidden;color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  /* ---------- layout ---------- */
+  #app{position:fixed;inset:0;display:flex;flex-direction:column;padding-top:var(--sat);
+       padding-left:var(--sal);padding-right:var(--sar);padding-bottom:var(--sab)}
+  /* ---------- top bar ---------- */
+  #topbar{display:flex;align-items:center;gap:10px;height:52px;flex:none;
+          padding:0 12px;background:var(--chrome);border-bottom:1px solid var(--chrome-border);
+          backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);z-index:20;
+          transition:transform .3s ease, opacity .3s ease}
+  .brand{display:flex;align-items:center;gap:9px;min-width:0}
+  .brand .mark{width:28px;height:28px;border-radius:8px;flex:none;
+    background:linear-gradient(135deg,var(--brand),var(--brand2));
+    display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;color:#fff}
+  .brand .name{font-weight:700;font-size:14px;letter-spacing:.2px;white-space:nowrap}
+  .spacer{flex:1}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--warn);transition:background .3s}
+  .dot.connecting{background:var(--warn);animation:pulse 1.2s infinite}
+  .dot.connected{background:var(--ok)}
+  .dot.off{background:var(--err)}
+  @keyframes pulse{50%{opacity:.35}}
+  #status{font-size:12px;color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46vw}
+  .hint{font-size:11px;color:var(--ink-dim);opacity:.75;display:none;white-space:nowrap}
+  /* ---------- buttons ---------- */
+  .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--chrome-border);
+       background:rgba(255,255,255,.05);color:var(--ink);font-size:13px;font-weight:600;
+       height:34px;padding:0 12px;border-radius:9px;cursor:pointer;flex:none;
+       transition:background .15s, transform .1s}
+  .btn:hover{background:rgba(255,255,255,.11)}
+  .btn:active{transform:translateY(1px)}
+  .btn:focus-visible{outline:2px solid var(--brand2);outline-offset:2px}
+  .btn .ic{width:15px;height:15px;stroke:currentColor;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round}
+  .btn.danger{border-color:rgba(255,107,107,.35);color:#ffc2c2}
+  /* ---------- screen ---------- */
+  #screenWrap{flex:1;position:relative;min-height:0;background:#000;overflow:hidden}
+  #screen{position:absolute;inset:0}
+  #screen canvas{display:block}
+  /* ---------- connecting overlay ---------- */
+  #overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+           background:radial-gradient(1200px 700px at 80% -10%,#1c1236 0%,#07070d 60%);
+           transition:opacity .35s ease}
+  #overlay.hidden{opacity:0;pointer-events:none}
+  .ocard{text-align:center;max-width:340px;padding:0 20px}
+  .ospin{width:46px;height:46px;margin:0 auto 18px;border-radius:50%;
+         border:3px solid rgba(124,92,255,.18);border-top-color:var(--brand);
+         animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .ot{font-size:17px;font-weight:700;margin-bottom:8px}
+  .os{font-size:13px;color:var(--ink-dim);line-height:1.6}
+  #errBox{display:none;margin-top:16px;color:#ffb3b3;background:rgba(255,107,107,.1);
+          border:1px solid rgba(255,107,107,.35);padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.5}
+  .retry{margin-top:14px}
+  /* ---------- responsive ---------- */
+  @media (max-width:640px){
+    #topbar{height:48px;padding:0 8px}
+    #status{max-width:32vw}
+    .hide-sm{display:none}
+    .btn{padding:0 10px;height:32px}
+  }
+  @media (pointer:coarse){
+    #topbar{margin-bottom:env(safe-area-inset-bottom)}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <div class="brand">
+      <div class="mark">N</div>
+      <div class="name">NexDesk</div>
+    </div>
+    <span class="dot" id="dot"></span>
+    <div id="status">Connecting…</div>
+    <div class="spacer"></div>
+    <div class="hint" id="hint">tap to show controls</div>
+    <button class="btn hide-sm" id="btnFit" title="Fit / actual size"><svg class="ic" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg><span id="fitLbl">Fit</span></button>
+    <button class="btn" id="btnFull" title="Fullscreen"><svg class="ic" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg></button>
+    <button class="btn" id="btnKeys" title="Send Ctrl+Alt+Del"><svg class="ic" viewBox="0 0 24 24"><path d="M20 13H4a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-5a1 1 0 0 0-1-1z"/><path d="M2 6h20v4H2z"/><circle cx="6" cy="21" r="1.6" fill="currentColor" stroke="none"/><circle cx="18" cy="21" r="1.6" fill="currentColor" stroke="none"/></svg></button>
+    <button class="btn" id="btnRefresh" title="Reconnect"><svg class="ic" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg></button>
+    <a class="btn danger" id="btnLogout" href="logout" title="Log out">Log out</a>
+  </div>
+
+  <div id="screenWrap">
+    <div id="screen"></div>
+    <div id="overlay">
+      <div class="ocard">
+        <div class="ospin"></div>
+        <div class="ot">Starting your virtual browser…</div>
+        <div class="os">This is a private, isolated desktop that lives on your own server.</div>
+        <div id="errBox"></div>
+        <button class="btn retry" id="btnRetry">Try again</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Global error catch so that any module load/runtime failure is visible on screen.
+  window.addEventListener('error', function (e) {
+    var box = document.getElementById('errBox');
+    if (box) { box.style.display = 'block'; box.textContent = 'Error: ' + (e.message || 'module load failed'); }
+    var st = document.getElementById('status');
+    if (st) st.textContent = 'Failed to start';
+  });
+</script>
+<script type="module">
+  // NexDesk viewer — embeds noVNC RFB directly so we fully control fullscreen,
+  // responsive scaling and the control bar. The whole app runs under the secret
+  // path that served this page (derived from location), so no URL is hardcoded.
+
+  import RFB from './novnc/core/rfb.js';
+
+  const $ = (id) => document.getElementById(id);
+  const dot = $('dot'), statusEl = $('status'), overlay = $('overlay'),
+        errBox = $('errBox'), screen = $('screen');
+
+  const webpath = location.pathname.split('/').filter(Boolean)[0] || '';
+  // Build the WebSocket endpoint under the same secret path.
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const wsUrl = `${proto}://${location.host}/${webpath}/vnc`;
+
+  let rfb = null;
+  let fitMode = true;
+
+  // ----- status helpers -----
+  function setState(mode, text){
+    dot.className = 'dot ' + mode;              // connecting | connected | off
+    statusEl.textContent = text;
+    if(mode === 'connected') overlay.classList.add('hidden');
+    else overlay.classList.remove('hidden');
+  }
+  function showError(msg){
+    errBox.style.display = 'block';
+    errBox.textContent = msg;
+    setState('off', 'Connection failed');
+  }
+
+  // ----- connect -----
+  function connect(){
+    errBox.style.display = 'none';
+    overlay.classList.remove('hidden');
+    setState('connecting', 'Connecting…');
+    if(rfb){ try{ rfb.disconnect(); }catch(e){} rfb = null; }
+    try{
+      rfb = new RFB(screen, wsUrl, { credentials:{} });
+    }catch(err){
+      return showError('Could not start viewer: ' + err.message);
+    }
+    rfb.scaleViewport = fitMode;
+    rfb.addEventListener('connect', () => setState('connected', 'Connected — you are in your private desktop'));
+    rfb.addEventListener('disconnect', (e) => {
+      const clean = e.detail ? e.detail.clean : false;
+      if(clean) setState('off', 'Disconnected');
+      else showError('Connection lost. Check the NexDesk services on your server.');
+    });
+    rfb.addEventListener('credentialsrequired', () => {
+      // noVNC talks straight to x11vnc (no password) — should not happen.
+    });
+  }
+
+  // ----- fit / actual size -----
+  function toggleFit(){
+    fitMode = !fitMode;
+    if(rfb){ rfb.scaleViewport = fitMode; rfb.updateClip(); }
+    $('fitLbl').textContent = fitMode ? 'Fit' : '100%';
+    // recentre when at 100%
+    screen.scrollLeft = 0; screen.scrollTop = 0;
+  }
+
+  // ----- fullscreen -----
+  function toggleFull(){
+    const el = document.documentElement;
+    if(!document.fullscreenElement){
+      (el.requestFullscreen && el.requestFullscreen())
+        .catch(() => showError('Fullscreen is blocked by the browser.'));
+    } else {
+      document.exitFullscreen().catch(()=>{});
+    }
+  }
+
+  // ----- auto-hide controls on desktop -----
+  let hideTimer = null;
+  function scheduleHide(){ clearTimeout(hideTimer); hideTimer = setTimeout(()=>{
+    // only auto-hide when connected and not in fullscreen-pointer editing
+    if(document.fullscreenElement && !document.hidden){
+      $('topbar').style.transform = 'translateY(-110%)';
+      $('topbar').style.opacity = '0';
+      $('hint').style.display = 'block';
+    }
+  }, 3500); }
+  function showControls(){ clearTimeout(hideTimer);
+    $('topbar').style.transform = 'none'; $('topbar').style.opacity = '1'; $('hint').style.display = 'none';
+  }
+  document.addEventListener('pointermove', () => { showControls(); scheduleHide(); });
+  document.addEventListener('pointerdown', showControls);
+  screen.addEventListener('pointermove', () => {}); // keep screen active
+
+  // ----- wire up -----
+  $('btnFull').addEventListener('click', toggleFull);
+  $('btnFit').addEventListener('click', toggleFit);
+  $('btnRefresh').addEventListener('click', connect);
+  $('btnRetry').addEventListener('click', connect);
+  $('btnKeys').addEventListener('click', () => { if(rfb) rfb.sendCtrlAltDel(); });
+  document.addEventListener('fullscreenchange', () => {
+    const fs = !!document.fullscreenElement;
+    $('btnFull').innerHTML = fs
+      ? '<svg class="ic" viewBox="0 0 24 24"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg>'
+      : '<svg class="ic" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>';
+    if(fs){ scheduleHide(); } else { showControls(); }
+  });
+
+  // keep the canvas sized to its container
+  const screenWrap = document.getElementById('screenWrap');
+  if ('ResizeObserver' in window){
+    new ResizeObserver(() => { if(rfb) rfb.updateClip(); }).observe(screenWrap);
+  }
+  window.addEventListener('resize', () => { if(rfb) rfb.updateClip(); });
+  window.addEventListener('orientationchange', () => setTimeout(()=> rfb && rfb.updateClip(), 300));
+
+  connect();
+</script>
+</body>
+</html>

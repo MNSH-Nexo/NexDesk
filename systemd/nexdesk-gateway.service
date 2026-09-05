@@ -1,5 +1,5 @@
 [Unit]
-Description=NexDesk web gateway (login + noVNC + VNC bridge)
+Description=NexDesk web gateway (login + noVNC viewer + VNC bridge)
 After=network.target nexdesk-vnc.service
 Requires=nexdesk-vnc.service
 
@@ -13,6 +13,9 @@ Environment=VNC_HOST=127.0.0.1
 Environment=VNC_PORT=5900
 Environment=NOVNC_DIR=/usr/share/novnc
 Environment=PASS_FILE=/opt/nexdesk/config/pass.txt
+Environment=WEBPATH_FILE=/opt/nexdesk/config/webpath.txt
+Environment=SECRET_FILE=/opt/nexdesk/.secret
+Environment=VIEWER_FILE=/opt/nexdesk/src/core/gateway/viewer.html
 ExecStart=/usr/bin/node /opt/nexdesk/src/core/gateway/server.js
 Restart=always
 RestartSec=2

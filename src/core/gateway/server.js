@@ -1,5 +1,8 @@
 'use strict';
-// NexDesk Gateway - secret-path login + noVNC client + WebSocket->VNC bridge.
+// NexDesk Gateway
+// Serves everything under a secret path prefix (BASE): a login page, then a
+// full-screen NexDesk viewer that embeds noVNC, plus a WebSocket->VNC bridge.
+// Root and any unknown path return a plain 404 so the service stays hidden.
 const express = require('express');
 const http = require('http');
 const net = require('net');
@@ -15,6 +18,7 @@ const NOVNC_DIR = process.env.NOVNC_DIR || '/usr/share/novnc';
 const PASS_FILE = process.env.PASS_FILE || '/opt/nexdesk/config/pass.txt';
 const WEBPATH_FILE = process.env.WEBPATH_FILE || '/opt/nexdesk/config/webpath.txt';
 const SECRET_FILE = process.env.SECRET_FILE || '/opt/nexdesk/.secret';
+const VIEWER_FILE = process.env.VIEWER_FILE || '/opt/nexdesk/src/core/gateway/viewer.html';
 
 function readFirstLine(p) { try { return fs.readFileSync(p, 'utf8').split('\n')[0].trim(); } catch (e) { return ''; } }
 const SECRET = readFirstLine(SECRET_FILE) || crypto.randomBytes(16).toString('hex');
@@ -24,7 +28,7 @@ const WEBPATH = readFirstLine(WEBPATH_FILE) || crypto.randomBytes(12).toString('
 if (!AUTH_PASS) { console.error('NexDesk password file missing: ' + PASS_FILE); process.exit(1); }
 if (!WEBPATH) { console.error('NexDesk webpath file missing: ' + WEBPATH_FILE); process.exit(1); }
 
-const BASE = '/' + WEBPATH;              // secret path prefix, e.g. /7H9m9fsHNl9y7jvfJIhMVBNojJs0
+const BASE = '/' + WEBPATH;              // secret path prefix
 
 const app = express();
 const server = http.createServer(app);
@@ -38,13 +42,10 @@ function authed(req) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-// Everything lives under the secret BASE. The root and any other path return
-// 404 (no redirect, no banner) so the service stays hidden unless you know the path.
 app.use(express.urlencoded({ extended: true }));
-
-// ---- Login (under BASE) ----
 const router = express.Router();
 
+// ---- Login (under BASE) ----
 router.get('/login', (req, res) => {
   if (authed(req)) return res.redirect(BASE + '/');
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -79,16 +80,19 @@ router.post('/login', (req, res) => {
   res.redirect(BASE + '/');
 });
 
-// ---- Home (under BASE): straight into the virtual browser ----
+// ---- Home (under BASE): the NexDesk full-screen viewer ----
 router.get('/', (req, res) => {
   if (!authed(req)) return res.redirect(BASE + '/login');
-  const vncUrl = BASE + '/novnc/vnc.html?autoconnect=true&resize=scale&path=' + encodeURIComponent(WEBPATH + '/vnc') + '&reconnect=true&reconnect_delay=2000';
-  res.redirect(vncUrl);
+  fs.stat(VIEWER_FILE, (e, st) => {
+    if (e || !st.isFile()) return res.status(500).send('Viewer not installed.');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    fs.createReadStream(VIEWER_FILE).pipe(res);
+  });
 });
 
 router.get('/logout', (req, res) => { res.setHeader('Set-Cookie', 'ndauth=; HttpOnly; Path=/; Max-Age=0'); res.redirect(BASE + '/login'); });
 
-// ---- noVNC static (under BASE) ----
+// ---- noVNC static assets (under BASE) ----
 router.use('/novnc', (req, res, next) => {
   if (!authed(req)) return res.redirect(BASE + '/login');
   const rel = req.path === '/' ? 'vnc.html' : req.path;
@@ -107,7 +111,7 @@ const wss = new WebSocketServer({ noServer: true });
 
 server.on('upgrade', (req, socket, head) => {
   const u = req.url || '';
-  if (!u.startsWith(BASE + '/vnc') && !u.startsWith(BASE + '/websockify')) return socket.destroy();
+  if (!u.startsWith(BASE + '/vnc')) return socket.destroy();
   if (!authed(req)) return socket.destroy();
   wss.handleUpgrade(req, socket, head, (ws) => {
     const tcp = net.connect(VNC_PORT, VNC_HOST, () => {});
