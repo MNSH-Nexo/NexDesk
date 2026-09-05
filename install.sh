@@ -15,8 +15,7 @@
 #   NX_PORT    listening port (default 8087)
 #   NX_DIR     install directory (default /opt/nexdesk)
 #   NX_USER    service account (default nexdesk)
-#   NX_SWAP    'auto' (ask to create 4G swap if none found) or 'off' (never touch swap)
-#   NX_SWAP_SIZE   swap-file size to create when asked (default 4G)
+#   NX_SWAP    'auto' (ask to create swap if none found) or 'off' (never touch swap)
 #   NX_SWAPFILE    swap-file path (default /swapfile)
 #
 set -euo pipefail
@@ -33,8 +32,9 @@ die()   { echo -e "${C_RED}  [x] $*${C_RESET}"; exit 1; }
 # ---------------------------------------------------------------------------
 # Swap readiness
 #    NexDesk runs several Chrome processes; a little swap avoids the kernel
-#    OOM-killing them under load. If no swap is active we ask the operator
-#    (y/N) before creating a swap file (default 4G). Respects NX_SWAP=off.
+#    OOM-killing them under load. If no swap is active we let the operator
+#    choose how much to create (1/2/3/4G, a custom size, or skip).
+#    Respects NX_SWAP=off and NX_SWAPFILE.
 # ---------------------------------------------------------------------------
 maybe_swap() {
   [[ "${NX_SWAP:-auto}" != "off" ]] || { warn "Swap setup skipped (NX_SWAP=off)."; return 0; }
@@ -45,42 +45,64 @@ maybe_swap() {
     return 0
   fi
 
-  local SZ="${NX_SWAP_SIZE:-4G}" FILE="${NX_SWAPFILE:-/swapfile}" ans cnt=4096
-  case "${SZ^^}" in
-    *G) cnt=$(( ${SZ%G} * 1024 ));;
-    *M) cnt=${SZ%M};;
-  esac
+  local FILE="${NX_SWAPFILE:-/swapfile}" DIR ANS="" SIZE="" CNT=0 FREE=""
+  DIR="$(dirname "$FILE")"
+  FREE="$(df -h -P "$DIR" 2>/dev/null | awk 'NR==2{print $4}')"
 
   warn "No active swap was found on this server."
-  warn "NexDesk runs several Chrome processes; without swap, heavy use can"
-  warn "exhaust RAM and cause processes to be killed by the kernel (OOM)."
+  warn "NexDesk runs several Chrome processes; without swap, heavy use can be"
+  warn "killed by the kernel (OOM).  Free space on $DIR: ${FREE:-unknown}"
   echo
-  read -r -p "  Create a ${SZ} swap file at ${FILE} now? [y/N]: " ans || true
-  case "${ans,,}" in
-    y|yes)
-      info "Creating swap file ${FILE} (${SZ}) — this may take a moment..."
-      if command -v fallocate >/dev/null 2>&1; then
-        fallocate -l "$SZ" "$FILE" 2>/dev/null \
-          || { rm -f "$FILE"; dd if=/dev/zero of="$FILE" bs=1M count="$cnt" status=none 2>/dev/null; }
-      else
-        dd if=/dev/zero of="$FILE" bs=1M count="$cnt" status=none 2>/dev/null
-      fi
-      chmod 600 "$FILE"
-      if mkswap "$FILE" >/dev/null 2>&1 && swapon "$FILE" 2>/dev/null; then
-        grep -q "^${FILE}[[:space:]]" /etc/fstab 2>/dev/null \
-          || printf '%s none swap sw 0 0\n' "$FILE" >> /etc/fstab
-        ok "Swap enabled (${SZ}) — active now and restored after reboot."
-        free -m 2>/dev/null | sed -n '1,2p' | sed 's/^/    /' || true
-      else
-        rm -f "$FILE"
-        warn "Could not enable swap; continuing without it."
-      fi
-      ;;
-    *)
-      warn "Skipped. If Chrome is later killed for low memory, add swap, e.g.:"
-      warn "  fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile"
-      ;;
+
+  # Choose a size interactively. EOF (non-interactive) defaults to skipping.
+  while :; do
+    echo "  Choose how much swap to create, or skip:"
+    echo "     1)  1G         2)  2G"
+    echo "     3)  3G         4)  4G"
+    echo "     5)  Custom size   (e.g. 512M or 2G)"
+    echo "     0)  Skip — leave swap off"
+    read -r -p "  Your choice [0-5]: " ANS || true
+    case "${ANS,,}" in
+      ""|0|n|no|skip)
+        warn "Skipped. If Chrome is later killed for low memory, add swap, e.g.:"
+        warn "  fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile"
+        return 0
+        ;;
+      1) SIZE="1G"; break;;
+      2) SIZE="2G"; break;;
+      3) SIZE="3G"; break;;
+      4) SIZE="4G"; break;;
+      5|c|custom)
+        read -r -p "  Size (like 512M or 2G): " SIZE || true
+        if [[ "$SIZE" =~ ^[0-9]+[GgMm]$ ]]; then break
+        else warn "Invalid size '$SIZE' — use e.g. 512M or 2G."; SIZE=""; fi
+        ;;
+      *) warn "Invalid choice '$ANS' — please pick a number 0-5.";;
+    esac
+  done
+
+  case "${SIZE^^}" in
+    *G) CNT=$(( ${SIZE%G} * 1024 ));;
+    *M) CNT=${SIZE%M};;
   esac
+
+  info "Creating swap file ${FILE} (${SIZE}) — this may take a moment..."
+  if command -v fallocate >/dev/null 2>&1; then
+    fallocate -l "$SIZE" "$FILE" 2>/dev/null \
+      || { rm -f "$FILE"; dd if=/dev/zero of="$FILE" bs=1M count="$CNT" status=none 2>/dev/null; }
+  else
+    dd if=/dev/zero of="$FILE" bs=1M count="$CNT" status=none 2>/dev/null
+  fi
+  chmod 600 "$FILE"
+  if mkswap "$FILE" >/dev/null 2>&1 && swapon "$FILE" 2>/dev/null; then
+    grep -q "^${FILE}[[:space:]]" /etc/fstab 2>/dev/null \
+      || printf '%s none swap sw 0 0\n' "$FILE" >> /etc/fstab
+    ok "Swap enabled (${SIZE}) — active now and restored after reboot."
+    free -m 2>/dev/null | sed -n '1,2p' | sed 's/^/    /' || true
+  else
+    rm -f "$FILE"
+    warn "Could not enable swap (not enough space?) — continuing without it."
+  fi
 }
 
 # ---------------------------------------------------------------------------
