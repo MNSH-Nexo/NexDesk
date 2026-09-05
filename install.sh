@@ -7,16 +7,22 @@
 # isolated service user, generates a secret URL/password/port, starts the
 # stack as systemd services, and finally prints the owner's personal link.
 #
-# Usage:
-#   sudo ./install.sh                 # defaults: /opt/nexdesk, port 8087
-#   sudo ./install.sh --port 8443 --dir /opt/nexdesk
+# One-command install from anywhere (no repo needed on the machine):
+#   bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/main/install.sh)
 #
-# Env overrides:
-#   NX_PORT    listening port (default 8087)
-#   NX_DIR     install directory (default /opt/nexdesk)
-#   NX_USER    service account (default nexdesk)
-#   NX_SWAP    'auto' (ask to create swap if none found) or 'off' (never touch swap)
-#   NX_SWAPFILE    swap-file path (default /swapfile)
+# The same command also updates (re-run) or removes NexDesk:
+#   bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/main/install.sh) update
+#   bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/main/install.sh) uninstall
+#
+# Or run it from a checkout directly:
+#   ./install.sh                      # defaults: /opt/nexdesk, port 8087
+#   ./install.sh --port 8443 --dir /opt/nexdesk
+#
+# Optional flags:  --port PORT   --dir DIR   --user USER
+# Optional env:    NX_PORT  NX_DIR  NX_USER  NX_SWAP(auto|off)  NX_SWAPFILE  NX_SRC_URL
+#
+# Running non-interactively (e.g. curl ... | sudo bash) skips the questions and
+# uses safe defaults; running interactively asks a couple of simple questions.
 #
 set -euo pipefail
 
@@ -28,6 +34,88 @@ info()  { echo -e "${C_CYN}  [i]${C_RESET} $*"; }
 ok()    { echo -e "${C_GRN}  [ok]${C_RESET} $*"; }
 warn()  { echo -e "${C_YEL}  [!]${C_RESET} $*"; }
 die()   { echo -e "${C_RED}  [x] $*${C_RESET}"; exit 1; }
+
+# ---------------------------------------------------------------------------
+# One-command bootstrap
+#    NexDesk is built to run straight from a pipe, in a single command:
+#
+#      bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/main/install.sh)
+#
+#    When executed that way only *this* file is downloaded, so if the rest of
+#    the source tree is not sitting next to us we fetch it and hand over to the
+#    real installer (auto-elevating to root with sudo when needed).
+#
+#    The same public file doubles as an updater and uninstaller:
+#      .../install.sh              -> install (or update) NexDesk
+#      .../install.sh update       -> pull the latest code, keep link + password
+#      .../install.sh uninstall    -> fully remove NexDesk from this server
+#
+#    When run from a full checkout (./install.sh) these branches are skipped
+#    and the normal installer below runs directly.
+# ---------------------------------------------------------------------------
+_SRC_URL="${NX_SRC_URL:-https://codeload.github.com/MNSH-Nexo/NexDesk/tar.gz/refs/heads/main}"
+_DIR_OF() { cd "$(dirname "$1")" 2>/dev/null && pwd || echo "."; }
+SCRIPT_DIR="$(_DIR_OF "${BASH_SOURCE[0]:-$0}")"
+HAS_SOURCE=0
+[[ -f "$SCRIPT_DIR/src/core/gateway/server.js" ]] && HAS_SOURCE=1
+
+# Fetch the full source so a fetched-pipe install always has every file.
+# Echoes the absolute path of the freshly downloaded repo directory.
+_fetch_source() {
+  local work dir
+  work="$(mktemp -d "${TMPDIR:-/tmp}/nexdesk.XXXXXX")"
+  info "Fetching NexDesk source (a moment)..." >&2
+  curl -fsSL "$_SRC_URL" | tar -xz -C "$work"
+  dir="$work/NexDesk-main"
+  [[ -f "$dir/install.sh" ]] || die "Downloaded source was incomplete — please retry the command."
+  printf '%s' "$dir"
+}
+
+# Run a script as root (auto-elevate with sudo; interactive when needed).
+_run_root() { # $1 = script path, then args
+  local scr="$1"; shift
+  if [[ "$(id -u)" -eq 0 ]]; then
+    bash "$scr" "$@"
+  else
+    command -v sudo >/dev/null 2>&1 || die "Root access required. Install 'sudo' or run as root."
+    info "Elevating to root with sudo..."
+    sudo -E bash "$scr" "$@"
+  fi
+}
+
+_cmd="${1:-install}"
+
+# --- uninstall -------------------------------------------------------------
+if [[ "$_cmd" == "uninstall" || "$_cmd" == "--uninstall" ]]; then
+  shift || true
+  if [[ "$HAS_SOURCE" -eq 1 ]] && [[ -f "$SCRIPT_DIR/uninstall.sh" ]]; then
+    _run_root "$SCRIPT_DIR/uninstall.sh" "$@"
+  else
+    _DIR="$(_fetch_source)"
+    _run_root "$_DIR/uninstall.sh" "$@"
+    rm -rf "$(dirname "$_DIR")"
+  fi
+  exit $?
+fi
+
+# --- install / update ------------------------------------------------------
+if [[ "$_cmd" == "update" || "$_cmd" == "--update" ]]; then shift || true; fi
+if [[ "$_cmd" == "install" || "$_cmd" == "--install" ]]; then shift || true; fi
+
+if [[ "$HAS_SOURCE" -eq 0 ]]; then
+  # We were fetched alone over the pipe: bring down the source and run it.
+  _DIR="$(_fetch_source)"
+  _run_root "$_DIR/install.sh" "$@"
+  _rc=$?
+  rm -rf "$(dirname "$_DIR")"
+  exit $_rc
+fi
+
+# Running from a checkout as a normal user: re-run ourselves as root.
+if [[ "$(id -u)" -ne 0 ]]; then
+  _run_root "$SCRIPT_DIR/install.sh" "$@"
+  exit $?
+fi
 
 # ---------------------------------------------------------------------------
 # Swap readiness
@@ -137,6 +225,27 @@ info "  Target dir : $NX_DIR"
 info "  Web port   : $NX_PORT"
 info "  User       : $NX_USER"
 echo
+
+# A couple of simple questions when running interactively; non-interactive
+# runs (pipes) skip straight ahead and use the defaults above.
+if [[ -t 0 ]] && [[ "${NX_YES:-0}" != "1" ]]; then
+  echo -e "  NexDesk is about to be installed on ${C_BOLD}this${C_RESET} server."
+  echo -e "  Change the web port here or press Enter to keep ${C_GRN}${NX_PORT}${C_RESET}:"
+  read -r -p "  Port [${NX_PORT}]: " _p || true
+  if [[ -n "${_p:-}" ]]; then
+    case "$_p" in
+      ''|*[!0-9]*) warn "Ignoring non-numeric port '$_p' — keeping ${NX_PORT}.";;
+      *) NX_PORT="$_p";;
+    esac
+  fi
+  read -r -p "  Start the installation now? [Y/n]: " _go || true
+  case "${_go:-y}" in
+    y|Y|yes|YES|Yes|"") : ;;
+    *) die "Aborted — nothing was installed.";;
+  esac
+  unset _go _p
+  echo
+fi
 
 # ---------------------------------------------------------------------------
 # Memory / swap readiness check (ask before doing heavy work)

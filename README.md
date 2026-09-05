@@ -109,24 +109,51 @@ network; the gateway is the single, authenticated entry point.
 - Debian or Ubuntu server (systemd, `root` or `sudo`), ~2 GB RAM or more recommended.
 - A public IP and/or an open or mapped port (default **8087**).
 
-**Quick start**
+**Quick start — one command, from anywhere**
+
+No need to download the repo or even have it on the machine. On any Debian/Ubuntu
+server with `curl` (and `sudo` for the privileged steps) just run:
 
 ```bash
-sudo ./install.sh
+bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/main/install.sh)
 ```
 
-Done. The installer prints your **personal link** and **password** at the end — keep them secret.
+That single command fetches the installer, downloads the NexDesk source, asks you
+one or two simple questions (which web port to use, whether to add swap) and then
+installs the whole stack. At the end it prints your **personal link** and
+**password** — keep them secret.
+
+> The command pulls the installer from this repository's `main` branch, so the
+> repository must be **publicly readable** for installs on other servers to work.
+
+> Non-interactive runs (e.g. `curl -fsSL <url> | sudo bash`) skip the questions
+> and use the safe defaults (port `8087`, swap offered only if missing).
+
+**Update NexDesk** (keeps your link, password and browser profile):
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/main/install.sh) update
+```
+
+**Remove NexDesk completely:**
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/main/install.sh) uninstall
+```
+
+**Custom install from a checkout**
+
+If you already have the repository on the server:
+
+```bash
+sudo ./install.sh                       # defaults: /opt/nexdesk, port 8087
+sudo ./install.sh --port 8443 --dir /opt/nexdesk
+```
 
 > During install, if the server has no active swap the installer lets you pick how much swap
 > to create (1/2/3/4G, or a custom size like 512M/2G) — or skip. NexDesk runs several Chrome
 > processes, and swap prevents out-of-memory kills; pick a size that fits your free disk space.
 > To never touch swap, run with `NX_SWAP=off`.
-
-**Options**
-
-```bash
-sudo ./install.sh --port 8443 --dir /opt/nexdesk     # custom port + directory
-```
 
 Environment overrides (equivalent to the flags):
 
@@ -147,6 +174,15 @@ your personal link.
 ---
 
 ## Uninstall
+
+Remove NexDesk from any server without a local copy:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/main/install.sh) uninstall
+```
+
+From a checkout, the same thing (stops the services, removes the units, the
+install directory with all data, and the service account):
 
 ```bash
 sudo ./uninstall.sh               # stop services, remove units + directory + service user
