@@ -1,0 +1,21 @@
+[Unit]
+Description=NexDesk web gateway (login + noVNC + VNC bridge)
+After=network.target nexdesk-vnc.service
+Requires=nexdesk-vnc.service
+
+[Service]
+Type=simple
+User=nexdesk
+WorkingDirectory=/opt/nexdesk/src/core/gateway
+Environment=NODE_ENV=production
+Environment=PORT=8087
+Environment=VNC_HOST=127.0.0.1
+Environment=VNC_PORT=5900
+Environment=NOVNC_DIR=/usr/share/novnc
+Environment=PASS_FILE=/opt/nexdesk/config/pass.txt
+ExecStart=/usr/bin/node /opt/nexdesk/src/core/gateway/server.js
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

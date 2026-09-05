@@ -1,0 +1,10 @@
+[Unit]
+Description=NexDesk virtual display (Xvfb)
+After=systemd-user-sessions.service
+[Service]
+Type=simple
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1440x900x24 -nolisten tcp
+Restart=always
+RestartSec=2
+[Install]
+WantedBy=multi-user.target

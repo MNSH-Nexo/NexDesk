@@ -1,0 +1,11 @@
+[Unit]
+Description=NexDesk VNC server (x11vnc)
+After=nexdesk-display.service
+Requires=nexdesk-display.service
+[Service]
+Type=simple
+ExecStart=/usr/bin/x11vnc -display :99 -nopw -shared -forever -repeat -localhost -rfbport 5900
+Restart=always
+RestartSec=2
+[Install]
+WantedBy=multi-user.target

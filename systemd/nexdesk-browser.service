@@ -1,0 +1,13 @@
+[Unit]
+Description=NexDesk persistent browser (Chromium)
+After=nexdesk-display.service
+Requires=nexdesk-display.service
+[Service]
+Type=simple
+User=nexdesk
+Environment=DISPLAY=:99
+ExecStart=/usr/bin/google-chrome --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=/home/nexdesk/.chrome --window-size=1440,880 --window-position=0,0 --no-first-run --no-default-browser-check --start-maximized about:blank
+Restart=always
+RestartSec=3
+[Install]
+WantedBy=multi-user.target
