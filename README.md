@@ -31,6 +31,8 @@ machine and **survives restarts**, so it works like a real desktop you can reach
 - **English-locale Chrome** — the profile is forced to `en-US` so pages do not flip to the
   server region's language.
 - **Real Chrome sandbox** — deliberately *not* launched with `--no-sandbox`.
+- **Swap safety net** — during install, if the server has no active swap the installer
+  asks before creating and enabling a swap file (default 4G).
 - **A clean installer and uninstaller** — one command brings the whole stack up as `systemd`
   services; one command tears it down completely.
 
@@ -100,6 +102,10 @@ sudo ./install.sh
 ```
 
 Done. The installer prints your **personal link** and **password** at the end — keep them secret.
+
+> During install, if the server has no active swap the installer asks (y/N) whether to create a
+> 4G swap file. This is recommended — NexDesk runs several Chrome processes and swap prevents
+> out-of-memory kills. Decline with `n`, or skip entirely with `NX_SWAP=off`.
 
 **Options**
 

@@ -15,6 +15,9 @@
 #   NX_PORT    listening port (default 8087)
 #   NX_DIR     install directory (default /opt/nexdesk)
 #   NX_USER    service account (default nexdesk)
+#   NX_SWAP    'auto' (ask to create 4G swap if none found) or 'off' (never touch swap)
+#   NX_SWAP_SIZE   swap-file size to create when asked (default 4G)
+#   NX_SWAPFILE    swap-file path (default /swapfile)
 #
 set -euo pipefail
 
@@ -26,6 +29,59 @@ info()  { echo -e "${C_CYN}  [i]${C_RESET} $*"; }
 ok()    { echo -e "${C_GRN}  [ok]${C_RESET} $*"; }
 warn()  { echo -e "${C_YEL}  [!]${C_RESET} $*"; }
 die()   { echo -e "${C_RED}  [x] $*${C_RESET}"; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Swap readiness
+#    NexDesk runs several Chrome processes; a little swap avoids the kernel
+#    OOM-killing them under load. If no swap is active we ask the operator
+#    (y/N) before creating a swap file (default 4G). Respects NX_SWAP=off.
+# ---------------------------------------------------------------------------
+maybe_swap() {
+  [[ "${NX_SWAP:-auto}" != "off" ]] || { warn "Swap setup skipped (NX_SWAP=off)."; return 0; }
+
+  # Already have an active swap device/file?
+  if command -v swapon >/dev/null 2>&1 && swapon --show --noheadings 2>/dev/null | grep -q .; then
+    ok "Active swap detected — skipping swap setup."
+    return 0
+  fi
+
+  local SZ="${NX_SWAP_SIZE:-4G}" FILE="${NX_SWAPFILE:-/swapfile}" ans cnt=4096
+  case "${SZ^^}" in
+    *G) cnt=$(( ${SZ%G} * 1024 ));;
+    *M) cnt=${SZ%M};;
+  esac
+
+  warn "No active swap was found on this server."
+  warn "NexDesk runs several Chrome processes; without swap, heavy use can"
+  warn "exhaust RAM and cause processes to be killed by the kernel (OOM)."
+  echo
+  read -r -p "  Create a ${SZ} swap file at ${FILE} now? [y/N]: " ans || true
+  case "${ans,,}" in
+    y|yes)
+      info "Creating swap file ${FILE} (${SZ}) — this may take a moment..."
+      if command -v fallocate >/dev/null 2>&1; then
+        fallocate -l "$SZ" "$FILE" 2>/dev/null \
+          || { rm -f "$FILE"; dd if=/dev/zero of="$FILE" bs=1M count="$cnt" status=none 2>/dev/null; }
+      else
+        dd if=/dev/zero of="$FILE" bs=1M count="$cnt" status=none 2>/dev/null
+      fi
+      chmod 600 "$FILE"
+      if mkswap "$FILE" >/dev/null 2>&1 && swapon "$FILE" 2>/dev/null; then
+        grep -q "^${FILE}[[:space:]]" /etc/fstab 2>/dev/null \
+          || printf '%s none swap sw 0 0\n' "$FILE" >> /etc/fstab
+        ok "Swap enabled (${SZ}) — active now and restored after reboot."
+        free -m 2>/dev/null | sed -n '1,2p' | sed 's/^/    /' || true
+      else
+        rm -f "$FILE"
+        warn "Could not enable swap; continuing without it."
+      fi
+      ;;
+    *)
+      warn "Skipped. If Chrome is later killed for low memory, add swap, e.g.:"
+      warn "  fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile"
+      ;;
+  esac
+}
 
 # ---------------------------------------------------------------------------
 # Options
@@ -59,6 +115,11 @@ info "  Target dir : $NX_DIR"
 info "  Web port   : $NX_PORT"
 info "  User       : $NX_USER"
 echo
+
+# ---------------------------------------------------------------------------
+# Memory / swap readiness check (ask before doing heavy work)
+# ---------------------------------------------------------------------------
+maybe_swap
 
 # ---------------------------------------------------------------------------
 # 1. System packages
