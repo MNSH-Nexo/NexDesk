@@ -28,6 +28,19 @@ machine and **survives restarts**, so it works like a real desktop you can reach
   session connects.
 - **Live resource meter** — the top bar shows real **CPU %** and **RAM used/total** with a
   colour gauge (green → yellow → red), reading NexDesk's own processes plus host totals.
+- **Adaptive connection quality** — a top-bar control (**Auto / High / Balanced / Low**) lets you
+  pick the remote-desktop quality. On **Auto**, NexDesk continuously measures the real delivery
+  rate and round-trip latency (shown live, e.g. `Q6 · 800 kbps · 60 ms`) and adjusts JPEG/colour
+  quality on the fly — dropping it on slow links and restoring it when the link recovers, all
+  without reconnecting.
+- **Self-healing connection** — if the link drops or the session is closed (even by a momentary
+  internet blip), the viewer **reconnects automatically** with a growing back-off and keeps
+  retrying on its own; no manual `Retry` needed in normal cases.
+- **Robust bridge** — the gateway fully tears down every dead/half-open session (its own ping
+  watchdog drops unresponsive clients and every exit path frees the VNC socket), so a dropped
+  visitor can never wedge the single x11vnc connection and block the next viewer.
+- **Memory Saver on by default** — the virtual Chrome runs with Chrome's *Memory Saver*
+  (tab-discarding) enabled as the default, so background tabs stop eating the server's limited RAM.
 - **English-locale Chrome** — the profile is forced to `en-US` so pages do not flip to the
   server region's language.
 - **Real Chrome sandbox** — deliberately *not* launched with `--no-sandbox`.
@@ -58,7 +71,8 @@ Everything reaches the user only through the gateway:
                     |   NexDesk gateway    |   Express on 0.0.0.0:8087
                     |  (login · viewer ·   |   secret path /<secret>
                     |   noVNC · clipboard  |   WS<->VNC bridge
-                    |   · /api/stats)      |
+                    |   · /api/stats       |   + adaptive-quality
+                    |   · /api/link)       |   + dead-session cleanup
                     +----------+-----------+
                        HTTP/WS  |  127.0.0.1
               +-----------------v------------------+
@@ -216,8 +230,45 @@ git** (see Security):
 | `/novnc/*` | GET | cookie | noVNC static assets |
 | `/clipboard` | POST | cookie | Write text into the remote clipboard |
 | `/api/stats` | GET | cookie | Host + per-process CPU/RAM (used by the top bar) |
+| `/api/link` | GET | cookie | Live delivered throughput (kbps) + round-trip (ms) measured by the gateway (drives Auto quality) |
 
 Everything **outside** the secret path — including the bare root — returns `404 Not found`.
+
+---
+
+## Tuning the connection (bandwidth / latency)
+
+NexDesk adapts to slow networks so the virtual desktop stays usable without burning bandwidth.
+
+- **Quality selector (top bar):** `Auto`, `High`, `Balanced` or `Low`. This controls the noVNC
+  JPEG quality and compression level, which x11vnc applies **live** — the change takes effect in
+  the current session, there is no reconnect.
+- **Auto mode:** every 2 seconds the gateway reports the real data actually delivered to your
+  browser (`/api/link`) together with the round-trip time. The viewer smooths those values and,
+  when the link struggles, drops quality immediately to keep motion fluid and data low; when the
+  link has headroom it restores crispness. A small live read-out (e.g. `Q6 · 800 kbps · 60 ms`)
+  shows the current quality, throughput and latency.
+- **Auto-reconnect:** if the connection drops for any reason while the tab is open, the viewer
+  reconnects on its own (1.5s → 8s back-off, up to 5 tries), including when you return to a tab
+  that was in the background during the drop. Only after the automatic attempts are exhausted do
+  you see a manual `Retry`.
+- **Dead-session cleanup:** the gateway pings each client and drops any that stop responding, and
+  tears the session down cleanly on every error/close path — so a visitor who vanishes never
+  leaves a half-open connection that could block the next viewer.
+
+### Memory Saver on the virtual Chrome
+
+Chrome's *Memory Saver* (which discards background tabs to free RAM) is enabled as the **default**
+on the persistent virtual browser. It is applied as a **recommended** policy so an operator can
+still toggle it inside the virtual Chrome at `chrome://settings/performance`:
+
+```json
+# /etc/opt/chrome/policies/managed/nexdesk-performance.json
+[ { "HighEfficiencyModeEnabled": { "Value": true, "level": "recommended" } } ]
+```
+
+On an already-installed server, create that file and `sudo systemctl restart nexdesk-browser`.
+It is safe on a memory-constrained host and has no effect while you are only using the active tab.
 
 ---
 
@@ -256,7 +307,6 @@ journalctl -u nexdesk-gateway -f
 ## Roadmap
 
 - [ ] Optional multi-user accounts with per-user profiles
-- [ ] Bandwidth / adaptive quality presets in the viewer
 - [ ] Download forwarding from the remote to the visitor's machine
 - [ ] Automatic HTTPS (Caddy / Traefik) documentation
 - [ ] Docker Compose packaging for ephemeral setups

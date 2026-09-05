@@ -360,13 +360,13 @@
       connected = true; retryCount = 0;
       setState('connected', 'Connected'); focusRemote(); setQualityMode(qualityMode);
     });
-    rfb.addEventListener('disconnect', (e) => {
+    rfb.addEventListener('disconnect', () => {
       if(tok !== connectToken) return;
       connected = false; rfb = null;
-      const clean = e.detail ? e.detail.clean : false;
-      if(clean){ setState('off', 'Disconnected'); return; }
-      // Unexpected drop: reconnect automatically with backoff while the page is
-      // visible, so a momentary internet blip self-heals without user action.
+      // This viewer has no "disconnect" action, so ANY drop on a live tab is
+      // unexpected — whether the network blipped or the gateway closed the
+      // session (which the browser reports as a clean close). Self-heal in
+      // every case while the page is visible.
       if(document.visibilityState !== 'hidden' && retryCount < RETRY_DELAYS.length){
         const delay = RETRY_DELAYS[retryCount++];
         setState('connecting', 'Reconnecting… (' + retryCount + '/' + RETRY_DELAYS.length + ')');
