@@ -37,18 +37,22 @@
           padding:0 12px;background:var(--chrome);border-bottom:1px solid var(--chrome-border);
           backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);z-index:20;
           transition:transform .3s ease, opacity .3s ease}
-  .brand{display:flex;align-items:center;gap:9px;min-width:0}
-  .brand .mark{width:28px;height:28px;border-radius:8px;flex:none;
+  .brand{display:flex;align-items:center;gap:11px;min-width:0;padding-left:2px}
+  .brand .mark{width:30px;height:30px;border-radius:9px;flex:none;
     background:linear-gradient(135deg,var(--brand),var(--brand2));
-    display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;color:#fff}
-  .brand .name{font-weight:700;font-size:14px;letter-spacing:.2px;white-space:nowrap}
+    box-shadow:0 4px 16px rgba(124,92,255,.35), inset 0 0 0 1px rgba(255,255,255,.18);
+    display:flex;align-items:center;justify-content:center;font-weight:900;font-size:15px;color:#fff}
+  .brand .name{font-weight:800;font-size:15px;letter-spacing:.5px;white-space:nowrap;
+    background:linear-gradient(180deg,#ffffff 30%,#cfcaff);-webkit-background-clip:text;background-clip:text;color:transparent}
   .spacer{flex:1}
-  .dot{width:8px;height:8px;border-radius:50%;background:var(--warn);transition:background .3s}
-  .dot.connecting{background:var(--warn);animation:pulse 1.2s infinite}
-  .dot.connected{background:var(--ok)}
+  .chip{display:flex;align-items:center;gap:8px;height:30px;padding:0 11px;border-radius:999px;flex:none;
+        background:rgba(255,255,255,.045);border:1px solid var(--chrome-border)}
+  .dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--warn);transition:background .3s, box-shadow .3s}
+  .dot.connecting{background:var(--warn);animation:pulse 1.1s infinite}
+  .dot.connected{background:var(--ok);box-shadow:0 0 0 3px rgba(62,207,142,.16)}
   .dot.off{background:var(--err)}
-  @keyframes pulse{50%{opacity:.35}}
-  #status{font-size:12px;color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46vw}
+  @keyframes pulse{50%{opacity:.3}}
+  #status{font-size:12px;font-weight:600;color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:30vw}
   .hint{font-size:11px;color:var(--ink-dim);opacity:.75;display:none;white-space:nowrap}
   /* ---------- buttons ---------- */
   .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--chrome-border);
@@ -97,6 +101,8 @@
   .clip-status.ok{color:var(--ok)} .clip-status.err{color:var(--err)}
   .clip-actions{display:flex;gap:8px;padding:10px 12px}
   .clip-actions .btn{flex:1;justify-content:center}
+  .clip-copy{padding:0 12px 11px}
+  .clip-copy .btn{width:100%;justify-content:center}
   .clip-tip{padding:0 12px 11px;font-size:11px;color:var(--ink-dim);line-height:1.5}
   .btn.primary{background:linear-gradient(135deg,var(--brand),var(--brand2));border:0;color:#fff}
   .btn.primary:hover{filter:brightness(1.08);background:linear-gradient(135deg,var(--brand),var(--brand2))}
@@ -118,9 +124,8 @@
       <div class="mark">N</div>
       <div class="name">NexDesk</div>
     </div>
-    <span class="dot" id="dot"></span>
-    <div id="status">Connecting…</div>
     <div class="spacer"></div>
+    <div class="chip"><span class="dot" id="dot"></span><span id="status">Connecting</span></div>
     <div class="hint" id="hint">tap to show controls</div>
     <button class="btn hide-sm" id="btnFit" title="Fit / actual size"><svg class="ic" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg><span id="fitLbl">Fit</span></button>
     <button class="btn" id="btnFull" title="Fullscreen"><svg class="ic" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg></button>
@@ -145,9 +150,10 @@
       <textarea id="clipText" placeholder="Clipboard text — received from the virtual desktop, or paste here…"></textarea>
       <div class="clip-status ok" id="clipStatus"></div>
       <div class="clip-actions">
-        <button class="btn" id="clipReceive">Get from my device</button>
-        <button class="btn primary" id="clipPaste">Paste into virtual desktop</button>
+        <button class="btn" id="clipReceive" title="Load text that is copied on your computer into this box">Get from my device</button>
+        <button class="btn primary" id="clipPaste" title="Send this text to the virtual browser and paste it">Paste into virtual desktop</button>
       </div>
+      <div class="clip-copy"><button class="btn" id="clipCopy" title="Copy this text onto your computer's clipboard">Copy to my device</button></div>
       <div class="clip-tip">Copy on your computer, open this panel, then press “Paste into virtual desktop”. If it can’t read your device clipboard automatically, click the box and press Ctrl+V, then Paste.</div>
     </div>
   </div>
@@ -198,7 +204,7 @@
   function connect(){
     errBox.style.display = 'none';
     overlay.classList.remove('hidden');
-    setState('connecting', 'Connecting…');
+    setState('connecting', 'Connecting');
     if(rfb){ try{ rfb.disconnect(); }catch(e){} rfb = null; }
     try{
       rfb = new RFB(screen, wsUrl, { credentials:{} });
@@ -210,14 +216,15 @@
       const t = e.detail && e.detail.text;
       if(t !== undefined && t !== null && t !== ''){
         clipText.value = t;
+        try { if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(t).catch(function(){}); } } catch (e2) {}
         clipMsg('Text received from the virtual desktop.');
       }
     });
-    rfb.addEventListener('connect', () => setState('connected', 'Connected — you are in your private desktop'));
+    rfb.addEventListener('connect', () => setState('connected', 'Connected'));
     rfb.addEventListener('disconnect', (e) => {
       const clean = e.detail ? e.detail.clean : false;
       if(clean) setState('off', 'Disconnected');
-      else showError('Connection lost. Check the NexDesk services on your server.');
+      else showError('Connection lost — will try to reconnect.');
     });
     rfb.addEventListener('credentialsrequired', () => {
       // noVNC talks straight to x11vnc (no password) — should not happen.
@@ -289,6 +296,20 @@
       clipMsg('Could not read your device clipboard automatically — click the box, press Ctrl+V, then Paste.', true);
     }
   }
+  async function copyToDevice(){
+    const txt = clipText.value;
+    if(!txt){ clipMsg('Nothing to copy yet — copy text inside the virtual browser, or type it here first.', true); return; }
+    try {
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        await navigator.clipboard.writeText(txt);
+        clipMsg('Copied to your computer — paste anywhere with Ctrl+V.');
+      } else {
+        clipText.select(); clipMsg('Select the box and press Ctrl+C to copy to your computer.', true);
+      }
+    } catch(e){
+      clipText.select(); clipMsg('Select the box and press Ctrl+C to copy to your computer.', true);
+    }
+  }
   async function pasteToDesktop(){
     if(!rfb){ clipMsg('Not connected yet.', true); return; }
     let txt = clipText.value;
@@ -329,6 +350,7 @@
   $('clipClose').addEventListener('click', () => clipPanel.classList.add('hidden'));
   $('clipPaste').addEventListener('click', pasteToDesktop);
   $('clipReceive').addEventListener('click', receiveFromDevice);
+  $('clipCopy').addEventListener('click', copyToDevice);
   document.addEventListener('pointerdown', (ev) => {
     if(clipPanel.classList.contains('hidden')) return;
     if(clipPanel.contains(ev.target) || ev.target.id === 'btnClip') return;
