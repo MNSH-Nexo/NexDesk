@@ -127,6 +127,16 @@ router.get('/logout', (req, res) => { res.setHeader('Set-Cookie', 'ndauth=; Http
 // ---- Clipboard (under BASE): write text into the virtual desktop's X
 // CLIPBOARD selection so the remote Chrome can paste it with Ctrl+V. ----
 const XVFB_DISPLAY = process.env.NEXDESK_DISPLAY || ':99';
+
+function clearRemoteKeyboard(){
+  // Return the virtual desktop's keyboard to a clean state so it matches the
+  // visitor's real machine: Caps Lock off, no stuck Shift/Ctrl/Alt/Meta.
+  const script = 'export DISPLAY=' + JSON.stringify(XVFB_DISPLAY).replace(/"/g, '') +
+    '; if xset q 2>/dev/null | grep -Eq "Caps Lock: *on"; then xdotool key Caps_Lock; fi' +
+    '; xdotool keyup Shift_L Shift_R Control_L Control_R Alt_L Alt_R Meta_L Meta_R 2>/dev/null || true';
+  try { const c = spawn('bash', ['-c', script]); c.on('error', () => {}); } catch (e) {}
+}
+
 function setXClipboard(text, cb){
   // Drop any previous clipboard owner so the newest copy wins (ignore no-match).
   try { const pk = spawn('pkill', ['-9', '-f', 'xclip -selection clipboard']); pk.on('error', () => {}); } catch (e) {}
@@ -199,7 +209,7 @@ server.on('upgrade', (req, socket, head) => {
     ws.on('message', (data) => { if (tcpReady) tcp.write(data); rxBytes += data.length; });
     ws.on('close', (code, reason) => { cleanup('clientClose code=' + code + ' ' + reason); tcp.destroy(); });
     ws.on('error', (e) => { L.warn('ws client error', ip, e.message); });
-    tcp.on('connect', () => { tcpReady = true; L.debug('vnc tcp connected', ip, VNC_HOST + ':' + VNC_PORT); });
+    tcp.on('connect', () => { tcpReady = true; L.debug('vnc tcp connected', ip, VNC_HOST + ':' + VNC_PORT); clearRemoteKeyboard(); });
     tcp.on('data', (d) => { txBytes += d.length; if (ws.readyState === WebSocket.OPEN) ws.send(d); });
     tcp.on('end', () => { L.warn('vnc tcp closed by server', ip); if (ws.readyState === WebSocket.OPEN) ws.close(); });
     tcp.on('error', (e) => { L.error('vnc tcp error', ip, e.message); try { ws.close(); } catch (_) {} });

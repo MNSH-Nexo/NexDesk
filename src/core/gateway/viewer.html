@@ -99,8 +99,6 @@
   .clip textarea:focus{outline:none}
   .clip-status{padding:8px 12px 0;font-size:11px;min-height:16px;line-height:1.4}
   .clip-status.ok{color:var(--ok)} .clip-status.err{color:var(--err)}
-  .clip-actions{display:flex;gap:8px;padding:10px 12px}
-  .clip-actions .btn{flex:1;justify-content:center}
   .clip-copy{padding:0 12px 11px}
   .clip-copy .btn{width:100%;justify-content:center}
   .clip-tip{padding:0 12px 11px;font-size:11px;color:var(--ink-dim);line-height:1.5}
@@ -149,10 +147,7 @@
       <div class="clip-head"><span>Clipboard</span><button class="clip-x" id="clipClose" title="Close">&times;</button></div>
       <textarea id="clipText" placeholder="Clipboard text — received from the virtual desktop, or paste here…"></textarea>
       <div class="clip-status ok" id="clipStatus"></div>
-      <div class="clip-actions">
-        <button class="btn" id="clipReceive" title="Load text that is copied on your computer into this box">Get from my device</button>
-        <button class="btn primary" id="clipPaste" title="Send this text to the virtual browser and paste it">Paste into virtual desktop</button>
-      </div>
+      <div class="clip-copy"><button class="btn primary" id="clipPaste" title="Send this text to the virtual browser and paste it">Paste into virtual desktop</button></div>
       <div class="clip-copy"><button class="btn" id="clipCopy" title="Copy this text onto your computer's clipboard">Copy to my device</button></div>
       <div class="clip-tip">Copy on your computer, open this panel, then press “Paste into virtual desktop”. If it can’t read your device clipboard automatically, click the box and press Ctrl+V, then Paste.</div>
     </div>
@@ -281,40 +276,35 @@
     clearTimeout(clipMsg._t);
     clipMsg._t = setTimeout(() => { clipStatus.textContent = ''; }, 6000);
   }
-  function deviceClipboardText(){
-    if(navigator.clipboard && navigator.clipboard.readText){
-      return navigator.clipboard.readText().catch(() => Promise.resolve(null));
-    }
-    return Promise.resolve(null);
-  }
-  async function receiveFromDevice(){
-    const t = await deviceClipboardText();
-    if(t !== null && t !== undefined && t !== ''){
-      clipText.value = t;
-      clipMsg('Loaded text copied on your computer.');
-    } else {
-      clipMsg('Could not read your device clipboard automatically — click the box, press Ctrl+V, then Paste.', true);
-    }
-  }
   async function copyToDevice(){
     const txt = clipText.value;
     if(!txt){ clipMsg('Nothing to copy yet — copy text inside the virtual browser, or type it here first.', true); return; }
+    let done = false;
     try {
       if(navigator.clipboard && navigator.clipboard.writeText){
-        await navigator.clipboard.writeText(txt);
-        clipMsg('Copied to your computer — paste anywhere with Ctrl+V.');
-      } else {
-        clipText.select(); clipMsg('Select the box and press Ctrl+C to copy to your computer.', true);
+        await navigator.clipboard.writeText(txt); done = true;
       }
-    } catch(e){
-      clipText.select(); clipMsg('Select the box and press Ctrl+C to copy to your computer.', true);
+    } catch(e){ done = false; }
+    if(!done){
+      // Reliable fallback that works even when the async Clipboard API is
+      // blocked in this browser context (needs a real focusable element).
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = txt; ta.setAttribute('readonly', '');
+        ta.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;border:0;';
+        document.body.appendChild(ta);
+        ta.focus(); ta.select(); ta.setSelectionRange(0, ta.value.length);
+        done = document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch(e){ done = false; }
     }
+    clipMsg(done ? 'Copied to your computer — paste anywhere with Ctrl+V.'
+      : 'The browser blocked automatic copying. Please select the text with your mouse, then press Ctrl+C on your computer.', true);
   }
   async function pasteToDesktop(){
     if(!rfb){ clipMsg('Not connected yet.', true); return; }
     let txt = clipText.value;
-    if(!txt){ txt = (await deviceClipboardText()) || ''; }
-    if(!txt){ clipMsg('No text yet — copy on your computer, or type it in the box.', true); return; }
+    if(!txt){ clipMsg('Type or paste text into the box above first.', true); return; }
     clipText.value = txt;
     clipMsg('Sending to the virtual desktop…');
     // 1) place the text on the desktop's own X clipboard via the gateway,
@@ -343,14 +333,21 @@
     }, 300);
   }
   function toggleClip(){
-    const hidden = clipPanel.classList.toggle('hidden');
-    if(!hidden){ receiveFromDevice(); }
+    clipPanel.classList.toggle('hidden');
+  }
+  // If the visitor clicks away from the page while a Shift/Ctrl/Alt is still
+  // held, tell the virtual desktop to release it (prevents stuck capitals).
+  function releaseStuckKeys(){
+    if(!rfb) return;
+    const mods = [[0xFFE1,'ShiftLeft'],[0xFFE2,'ShiftRight'],[0xFFE3,'ControlLeft'],[0xFFE4,'ControlRight'],
+                  [0xFFE9,'AltLeft'],[0xFFEA,'AltRight'],[0xFFE7,'MetaLeft'],[0xFFE8,'MetaRight']];
+    for(const m of mods){ try { rfb.sendKey(m[0], m[1], false); } catch(e){} }
   }
   $('btnClip').addEventListener('click', toggleClip);
   $('clipClose').addEventListener('click', () => clipPanel.classList.add('hidden'));
   $('clipPaste').addEventListener('click', pasteToDesktop);
-  $('clipReceive').addEventListener('click', receiveFromDevice);
   $('clipCopy').addEventListener('click', copyToDevice);
+  window.addEventListener('blur', releaseStuckKeys);
   document.addEventListener('pointerdown', (ev) => {
     if(clipPanel.classList.contains('hidden')) return;
     if(clipPanel.contains(ev.target) || ev.target.id === 'btnClip') return;
