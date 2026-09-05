@@ -107,7 +107,7 @@ network; the gateway is the single, authenticated entry point.
 **Requirements**
 
 - Debian or Ubuntu server (systemd, `root` or `sudo`), ~2 GB RAM or more recommended.
-- A public IP and/or an open or mapped port (default **8087**).
+- A public IP and/or open or mapped ports (defaults: **8087** for HTTP, **8443** for HTTPS).
 
 **Quick start — one command, from anywhere**
 
@@ -119,15 +119,23 @@ bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/main/insta
 ```
 
 That single command fetches the installer, downloads the NexDesk source, asks you
-one or two simple questions (which web port to use, whether to add swap) and then
-installs the whole stack. At the end it prints your **personal link** and
-**password** — keep them secret.
+a couple of simple questions (which HTTP port to use, whether to also enable
+HTTPS, whether to add swap) and then installs the whole stack. At the end it prints
+your **personal links** (HTTP and, by default, an HTTPS one over a generated
+self-signed certificate) and the **password** — keep them secret.
+
+> **HTTPS by default.** The installer generates a self-signed certificate (valid ~2 years)
+> and serves HTTP **and** HTTPS together, so you get both
+> `http://<server>:8087/...` and `https://<server>:8443/...`. Because the certificate is
+> self-signed, your browser asks you to accept it once — that is normal and safe. Disable
+> it with `--no-https` (or `NX_HTTPS=off`).
 
 > The command pulls the installer from this repository's `main` branch, so the
 > repository must be **publicly readable** for installs on other servers to work.
 
 > Non-interactive runs (e.g. `curl -fsSL <url> | sudo bash`) skip the questions
-> and use the safe defaults (port `8087`, swap offered only if missing).
+> and use the safe defaults (HTTP port `8087`, HTTPS enabled on `8443`, swap offered
+> only if missing). Every run writes a full transcript to `<install-dir>/logs/`.
 
 **Update NexDesk** (keeps your link, password and browser profile):
 
@@ -146,8 +154,10 @@ bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/main/insta
 If you already have the repository on the server:
 
 ```bash
-sudo ./install.sh                       # defaults: /opt/nexdesk, port 8087
+sudo ./install.sh                       # defaults: /opt/nexdesk, ports 8087 + 8443
 sudo ./install.sh --port 8443 --dir /opt/nexdesk
+sudo ./install.sh --https-port 9443     # HTTPS on a different port
+sudo ./install.sh --no-https            # HTTP only
 ```
 
 > During install, if the server has no active swap the installer lets you pick how much swap
@@ -155,21 +165,30 @@ sudo ./install.sh --port 8443 --dir /opt/nexdesk
 > processes, and swap prevents out-of-memory kills; pick a size that fits your free disk space.
 > To never touch swap, run with `NX_SWAP=off`.
 
-Environment overrides (equivalent to the flags):
+Flags / environment overrides (env vars are equivalent to the flags):
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `NX_PORT` | `8087` | Public listening port |
-| `NX_DIR` | `/opt/nexdesk` | Install directory |
-| `NX_USER` | `nexdesk` | Isolated service account |
+| Flag | Env | Default | Meaning |
+| --- | --- | --- | --- |
+| `--port PORT` | `NX_PORT` | `8087` | Public HTTP listening port |
+| `--https-port PORT` | `NX_HTTPS_PORT` | `8443` | Public HTTPS listening port |
+| `--no-https` | `NX_HTTPS=off` | on | Serve HTTPS (self-signed) too |
+| `--dir DIR` | `NX_DIR` | `/opt/nexdesk` | Install directory |
+| `--user USER` | `NX_USER` | `nexdesk` | Isolated service account |
+
+> The installer pre-flights the system (free ports, disk space, a live dpkg lock),
+> installs Node.js automatically if it is missing (NodeSource, then the distro package
+> as an offline fallback), and retries `apt` if a background update holds the lock.
+> If the public IP cannot be reached it falls back to a local IP in the final report.
 
 The installer detects the OS, installs the engine (Chromium/Xvfb/x11vnc/noVNC) and the
 gateway dependencies, creates an **isolated service user**, generates the secret path,
-password and signing secret, wires up the four `systemd` units, starts the stack, and prints
-your personal link.
+password and signing secret, generates the **self-signed TLS certificate**, wires up the
+four `systemd` units, starts the stack, prints a short **health report** for every service
+and port, and finally shows your personal HTTP **and** HTTPS links.
 
-> The personal link already contains the secret path, and the gateway only responds under it —
-> so sharing the full link, together with the password, is what grants access.
+> The personal links already contain the secret path, and the gateway only responds under
+> it — so sharing a full link, together with the password, is what grants access. A full
+> transcript of every run is saved under `<install-dir>/logs/installer-<timestamp>.log`.
 
 ---
 

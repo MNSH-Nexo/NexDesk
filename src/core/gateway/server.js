@@ -5,6 +5,7 @@
 // Root and any unknown path return a plain 404 so the service stays hidden.
 const express = require('express');
 const http = require('http');
+const https = require('https');
 const net = require('net');
 const crypto = require('crypto');
 const fs = require('fs');
@@ -20,6 +21,15 @@ const PASS_FILE = process.env.PASS_FILE || '/opt/nexdesk/config/pass.txt';
 const WEBPATH_FILE = process.env.WEBPATH_FILE || '/opt/nexdesk/config/webpath.txt';
 const SECRET_FILE = process.env.SECRET_FILE || '/opt/nexdesk/.secret';
 const VIEWER_FILE = process.env.VIEWER_FILE || '/opt/nexdesk/src/core/gateway/viewer.html';
+
+// Optional self-signed HTTPS listener (HTTP and HTTPS are served together).
+const HTTPS_PORT = parseInt(process.env.HTTPS_PORT || '0', 10);
+const TLS_KEY   = process.env.TLS_KEY   || '/opt/nexdesk/config/tls/key.pem';
+const TLS_CERT  = process.env.TLS_CERT  || '/opt/nexdesk/config/tls/cert.pem';
+const TLS_ENABLED = HTTPS_PORT > 0 && fs.existsSync(TLS_KEY) && fs.existsSync(TLS_CERT);
+if (HTTPS_PORT > 0 && !TLS_ENABLED) {
+  console.warn('[NexDesk] HTTPS requested but TLS key/cert missing (' + TLS_KEY + ') — serving HTTP only.');
+}
 
 function readFirstLine(p) { try { return fs.readFileSync(p, 'utf8').split('\n')[0].trim(); } catch (e) { return ''; } }
 const SECRET = readFirstLine(SECRET_FILE) || crypto.randomBytes(16).toString('hex');
@@ -281,7 +291,9 @@ app.use((req, res) => res.status(404).type('text/plain').send('Not found.'));
 // ---- WebSocket <-> VNC bridge (only under BASE/vnc) ----
 const wss = new WebSocketServer({ noServer: true });
 
-server.on('upgrade', (req, socket, head) => {
+// Shared by both the HTTP and (optional) HTTPS listeners, so a viewer over
+// either scheme can reach the same VNC bridge.
+function handleUpgrade(req, socket, head) {
   const u = req.url || '';
   const ip = req.socket.remoteAddress || '?';
   const q = u.split('?')[0];
@@ -335,6 +347,17 @@ server.on('upgrade', (req, socket, head) => {
     tcp.on('end', () => { L.warn('vnc tcp closed by server', ip); teardown('vncEnd'); });
     tcp.on('error', (e) => { L.error('vnc tcp error', ip, e.message); teardown('vncError'); });
   });
-});
+}
+server.on('upgrade', handleUpgrade);
 
 server.listen(PORT, '0.0.0.0', () => L.info('NexDesk gateway listening on port ' + PORT + ' (log=' + LOG_LEVEL + ')'));
+
+// Optional self-signed HTTPS listener, sharing the same app, auth and bridge.
+if (TLS_ENABLED) {
+  const httpsServer = https.createServer({
+    key: fs.readFileSync(TLS_KEY),
+    cert: fs.readFileSync(TLS_CERT),
+  }, app);
+  httpsServer.on('upgrade', handleUpgrade);
+  httpsServer.listen(HTTPS_PORT, '0.0.0.0', () => L.info('NexDesk TLS gateway listening on port ' + HTTPS_PORT + ' (log=' + LOG_LEVEL + ')'));
+}

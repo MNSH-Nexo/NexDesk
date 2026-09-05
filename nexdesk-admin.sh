@@ -57,6 +57,11 @@ port_val() {
   echo "${p:-8087}"
 }
 
+# HTTPS is served only when the gateway unit declares HTTPS_PORT (+ TLS files).
+https_port_val() {
+  sed -n 's/^Environment=HTTPS_PORT=\([0-9][0-9]*\)$/\1/p' "$GATEWAY_UNIT" 2>/dev/null | head -1
+}
+
 public_ip() {
   curl -4 -fsSL --max-time 4 https://api.ipify.org 2>/dev/null || true
 }
@@ -117,10 +122,11 @@ show_status() {
 # Connection info
 # ---------------------------------------------------------------------------
 show_info() {
-  local wp pp pport ip note extra=""
+  local wp pp pport https ip note extra=""
   wp="$(webpath_val)"
   pp="$(pass_val)"
   pport="$(port_val)"
+  https="$(https_port_val)"
   ip="$(public_ip)"
   if [[ -z "$ip" ]]; then
     ip="$(local_ips | head -1)"
@@ -130,18 +136,23 @@ show_info() {
   echo -e "  ${B}${CY}Connection info${R}"
   line
   echo -e "  ${B}Secret web path :${R} ${YE}/${wp}${R}"
-  echo -e "  ${B}Listening port  :${R} ${pport}"
+  echo -e "  ${B}HTTP  port      :${R} ${pport}"
+  [[ -n "$https" ]] && echo -e "  ${B}HTTPS port      :${R} ${https}"
   echo -e "  ${B}Public IP       :${R} ${WH}${ip}${R}"
   [[ -n "$extra" ]] && echo -e "$extra"
   line
   echo -e "  ${B}${GR}Open in your browser:${R}"
   echo
   echo -e "   ${B}${WH}  http://${ip}:${pport}/${wp}${R}"
+  if [[ -n "$https" ]]; then
+    echo -e "   ${B}${WH}  https://${ip}:${https}/${wp}${R}"
+    echo -e "   ${D}  (https uses a self-signed cert — accept the one-time warning)${R}"
+  fi
   echo
   line
   echo -e "  ${B}Password:${R}  ${MG}${pp}${R}"
   echo
-  echo -e "  ${YE}Keep this link and password secret. Anyone holding both can${R}"
+  echo -e "  ${YE}Keep these links and password secret. Anyone holding both can${R}"
   echo -e "  ${YE}reach this virtual browser. Root and unknown URLs return 404.${R}"
   echo
 }
@@ -234,8 +245,11 @@ change_webpath() {
     *) fail "Invalid choice."; return;;
   esac
   local ip="$(public_ip)"; [[ -n "$ip" ]] || ip="$(local_ips | head -1)"
+  local _https="$(https_port_val)"
   echo
-  echo -e "  New link will be: ${WH}http://${ip}:$(port_val)/${newwp}${R}"
+  echo -e "  New links will be:"
+  echo -e "  ${WH}   http://${ip}:$(port_val)/${newwp}${R}"
+  [[ -n "$_https" ]] && echo -e "  ${WH}   https://${ip}:${_https}/${newwp}${R}"
   read -r -p "  Apply now? [y/N]: " go
   [[ "$go" == "y" || "$go" == "Y" ]] || { info "Cancelled."; return; }
   write_secret "$WEBPATH_FILE" "$newwp"
@@ -244,8 +258,9 @@ change_webpath() {
   if systemctl is-active --quiet nexdesk-gateway; then
     ok "Web path updated and gateway restarted."
     echo
-    echo -e "  ${B}${GR}Your new link:${R}"
-    echo -e "  ${WH}  http://${ip}:$(port_val)/${newwp}${R}"
+    echo -e "  ${B}${GR}Your new links:${R}"
+    echo -e "  ${WH}   http://${ip}:$(port_val)/${newwp}${R}"
+    [[ -n "$_https" ]] && echo -e "  ${WH}   https://${ip}:${_https}/${newwp}${R}"
     echo
     info "Open the new link and log in with your password. Old links are dead."
   else
