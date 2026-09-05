@@ -52,8 +52,24 @@
   .dot.connected{background:var(--ok);box-shadow:0 0 0 3px rgba(62,207,142,.16)}
   .dot.off{background:var(--err)}
   @keyframes pulse{50%{opacity:.3}}
-  #status{font-size:12px;font-weight:600;color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:30vw}
+  #status{font-size:12px;font-weight:600;color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:24vw}
   .hint{font-size:11px;color:var(--ink-dim);opacity:.75;display:none;white-space:nowrap}
+  /* ---------- connection quality control ---------- */
+  .qctl{position:relative;display:inline-flex;align-items:center;gap:6px;height:32px;flex:none;padding:0 8px 0 6px;
+        background:rgba(255,255,255,.045);border:1px solid var(--chrome-border);border-radius:9px}
+  .qctl .qic{width:14px;height:14px;stroke:var(--brand2);stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round;flex:none}
+  #qualitySel{appearance:none;-webkit-appearance:none;border:0;background:transparent;color:var(--ink);font-size:13px;font-weight:700;cursor:pointer;
+              font-family:inherit;padding:0 18px 0 2px;outline:none;
+              background-image:linear-gradient(45deg,transparent 50%,var(--ink-dim) 50%),linear-gradient(135deg,var(--ink-dim) 50%,transparent 50%);
+              background-position:calc(100% - 9px) 50%,calc(100% - 4px) 50%;background-size:5px 5px;background-repeat:no-repeat}
+  #qualitySel option{background:#16162a;color:#eef0ff}
+  #qualitySel:hover{color:#fff}
+  #qinfo{font-size:11px;font-weight:600;color:var(--ink-dim);font-variant-numeric:tabular-nums;white-space:nowrap;flex:none}
+  .qinfo-pop{display:none;position:absolute;right:6px;top:calc(100% + 6px);z-index:25;width:235px;padding:10px 12px;
+        background:rgba(15,15,26,.96);border:1px solid var(--chrome-border);border-radius:10px;font-size:11px;color:var(--ink-dim);line-height:1.6;
+        box-shadow:0 14px 34px rgba(0,0,0,.45)}
+  .qctl:hover .qinfo-pop{display:block}
+  .qinfo-pop b{color:var(--ink);font-weight:700}
   /* ---------- resource meter (RAM/CPU) ---------- */
   .meter{display:flex;align-items:center;gap:6px;flex:none}
   .mcell{display:flex;align-items:center;gap:6px;height:30px;padding:0 10px;border-radius:999px;flex:none;
@@ -148,6 +164,17 @@
       </div>
     </div>
     <div class="chip"><span class="dot" id="dot"></span><span id="status">Connecting</span></div>
+    <div class="qctl" title="Connection quality — how the virtual screen is compressed for your internet speed">
+      <svg class="qic" viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>
+      <select id="qualitySel" aria-label="Connection quality">
+        <option value="auto" selected>Auto</option>
+        <option value="high">High</option>
+        <option value="balanced">Balanced</option>
+        <option value="low">Low</option>
+      </select>
+      <span class="qinfo-pop">Auto adjusts the on-screen quality so it stays smooth on slow internet — it lowers detail when the connection is struggling and restores it when there's room. <b>High</b> = sharpest (more data). <b>Balanced</b> = good all-round. <b>Low</b> = uses the least data, ideal on weak networks.</span>
+    </div>
+    <span class="qinfo" id="qinfo" title="Live link: image quality · bandwidth · latency">Auto</span>
     <div class="hint" id="hint">tap to show controls</div>
     <button class="btn hide-sm" id="btnFit" title="Fit / actual size"><svg class="ic" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg><span id="fitLbl">Fit</span></button>
     <button class="btn" id="btnFull" title="Fullscreen"><svg class="ic" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg></button>
@@ -206,6 +233,75 @@
   let rfb = null;
   let fitMode = true;
 
+  // ----- automatic reconnect on dropped links (self-healing) -----
+  // connectToken invalidates the event handlers of any RFB instance we replace,
+  // so a stale instance can never overwrite the state of a newer one.
+  let connectToken = 0;
+  let retryTimer = null;
+  let retryCount = 0;
+  let connected = false;
+  const RETRY_DELAYS = [1500, 2500, 4000, 6000, 8000];  // ms, growing backoff
+  function clearRetry(){ if(retryTimer){ clearTimeout(retryTimer); retryTimer = null; } }
+
+  // ----- connection quality (Auto adaptive + manual presets) -----
+  // noVNC applies qualityLevel/compressLevel live: it re-sends SetEncodings so
+  // x11vnc switches its Tight/JPEG compression instantly — no reconnect needed.
+  const PRESETS = { high:{q:8,c:2}, balanced:{q:6,c:4}, low:{q:3,c:7} };
+  const qSel = $('qualitySel'), qInfo = $('qinfo');
+  let qualityMode = 'auto';
+  let linkEwma = null;   // smoothed {b: delivered kbps, r: round-trip ms}
+  let lastQ = null;
+  function applyQuality(q, c){
+    if(!rfb) return;
+    try { if(Number.isInteger(q) && q >= 0 && q <= 9) rfb.qualityLevel = q; } catch(e){}
+    try { if(Number.isInteger(c) && c >= 0 && c <= 9) rfb.compressLevel = c; } catch(e){}
+    lastQ = q;
+  }
+  function linkLabel(){
+    const e = linkEwma || { r:0, b:0 };
+    const q = lastQ == null ? '–' : 'Q' + lastQ;
+    return q + ' · ' + Math.round(e.b) + ' kbps · ' + Math.round(e.r) + ' ms';
+  }
+  function pickAutoQ(r, b){
+    // Struggling (high latency or saturated delivery) -> cut quality hard.
+    if(r > 380 || b > 6000) return { q:3, c:7 };
+    if(b > 4000 || r > 260) return { q:4, c:6 };
+    if(b > 2200)            return { q:5, c:5 };
+    // Easy link -> restore crispness.
+    if(r < 150 && b < 1200) return { q:7, c:3 };
+    return { q:6, c:4 };
+  }
+  async function linkTick(){
+    if(qualityMode !== 'auto' || !rfb) return;
+    try{
+      const r = await fetch(location.origin + '/' + webpath + '/api/link',
+        { headers:{ 'Accept':'application/json' }, credentials:'same-origin' });
+      if(!r.ok) return;
+      const d = await r.json();
+      if(!d || !d.ok) return;
+      const rawB = +d.txRateKbps || 0, rawR = +d.rttMs || 0;
+      linkEwma = linkEwma
+        ? { b: 0.55*linkEwma.b + 0.45*rawB, r: 0.55*linkEwma.r + 0.45*rawR }
+        : { b: rawB, r: rawR };
+      const s = pickAutoQ(linkEwma.r, linkEwma.b);
+      applyQuality(s.q, s.c);
+      qInfo.textContent = linkLabel();
+    }catch(e){}
+  }
+  function setQualityMode(m){
+    qualityMode = m;
+    linkEwma = null;
+    if(PRESETS[m]){
+      const p = PRESETS[m];
+      applyQuality(p.q, p.c);
+      qInfo.textContent = m.charAt(0).toUpperCase() + m.slice(1);
+    } else if(m === 'auto'){
+      qInfo.textContent = 'Auto';
+    }
+  }
+  qSel.addEventListener('change', () => setQualityMode(qSel.value));
+  setInterval(linkTick, 2000);
+
   // Never forward Caps Lock to the virtual desktop. Toggling it on your OS
   // already flips letter case inside the character (keysym) we send, so keeping
   // the remote's Caps Lock off prevents its lock state from drifting out of
@@ -233,11 +329,17 @@
   }
 
   // ----- connect -----
-  function connect(){
+  // manual=true clears the backoff counter (fresh attempt from a button);
+  // manual=false is used by the automatic reconnector so backoff keeps growing.
+  function connect(manual){
+    clearRetry();
+    if(manual !== false) retryCount = 0;
     errBox.style.display = 'none';
     overlay.classList.remove('hidden');
     setState('connecting', 'Connecting');
     if(rfb){ try{ rfb.disconnect(); }catch(e){} rfb = null; }
+    connectToken++;
+    const tok = connectToken;
     try{
       rfb = new RFB(screen, wsUrl, { credentials:{} });
     }catch(err){
@@ -245,6 +347,7 @@
     }
     rfb.scaleViewport = fitMode;
     rfb.addEventListener('clipboard', (e) => {
+      if(tok !== connectToken) return;
       const t = e.detail && e.detail.text;
       if(t !== undefined && t !== null && t !== ''){
         clipText.value = t;
@@ -252,16 +355,40 @@
         clipMsg('Text received from the virtual desktop.');
       }
     });
-    rfb.addEventListener('connect', () => { setState('connected', 'Connected'); focusRemote(); });
+    rfb.addEventListener('connect', () => {
+      if(tok !== connectToken) return;
+      connected = true; retryCount = 0;
+      setState('connected', 'Connected'); focusRemote(); setQualityMode(qualityMode);
+    });
     rfb.addEventListener('disconnect', (e) => {
+      if(tok !== connectToken) return;
+      connected = false; rfb = null;
       const clean = e.detail ? e.detail.clean : false;
-      if(clean) setState('off', 'Disconnected');
-      else showError('Connection lost — will try to reconnect.');
+      if(clean){ setState('off', 'Disconnected'); return; }
+      // Unexpected drop: reconnect automatically with backoff while the page is
+      // visible, so a momentary internet blip self-heals without user action.
+      if(document.visibilityState !== 'hidden' && retryCount < RETRY_DELAYS.length){
+        const delay = RETRY_DELAYS[retryCount++];
+        setState('connecting', 'Reconnecting… (' + retryCount + '/' + RETRY_DELAYS.length + ')');
+        errBox.style.display = 'block';
+        errBox.textContent = 'Connection dropped — retrying automatically.';
+        retryTimer = setTimeout(() => connect(false), delay);
+      } else {
+        showError('Connection lost — press Retry to reconnect.');
+      }
     });
     rfb.addEventListener('credentialsrequired', () => {
       // noVNC talks straight to x11vnc (no password) — should not happen.
     });
   }
+  // If the tab was hidden during a drop (no auto-retry ran), reconnect on return.
+  document.addEventListener('visibilitychange', () => {
+    if(document.visibilityState === 'visible' && !connected && !retryTimer){
+      clearRetry();
+      if(retryCount < RETRY_DELAYS.length){ retryTimer = setTimeout(() => connect(false), 800); }
+      else connect(true);
+    }
+  });
 
   // ----- fit / actual size -----
   function toggleFit(){

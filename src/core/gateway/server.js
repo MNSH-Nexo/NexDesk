@@ -251,6 +251,16 @@ router.get('/api/stats', (req, res) => {
   }, STAT_WINDOW_MS);
 });
 
+// ---- Live link metrics for the viewer's auto-quality engine ----
+// The gateway measures how many bytes are actually flowing to the active
+// viewer each second plus the round-trip latency (ws ping/pong), so the page
+// can adapt image quality to the real connection without reconnecting.
+let linkState = { txRateKbps: 0, rttMs: 0 };
+router.get('/api/link', (req, res) => {
+  if(!authed(req)) return res.status(401).json({ ok:false, error:'unauthorized' });
+  res.json({ ok:true, txRateKbps: Math.round(linkState.txRateKbps), rttMs: Math.round(linkState.rttMs) });
+});
+
 // ---- noVNC static assets (under BASE) ----
 router.use('/novnc', (req, res, next) => {
   if (!authed(req)) return res.redirect(BASE + '/login');
@@ -289,17 +299,41 @@ server.on('upgrade', (req, socket, head) => {
       if (rxBytes + txBytes > 0) L.debug('ws traffic', ip, 'tx=' + txBytes + 'B rx=' + rxBytes + 'B /' + RATE_SEC + 's');
       rxBytes = 0; txBytes = 0;
     }, RATE_SEC * 1000).unref();
-    const cleanup = (why) => {
+    // Per-second delivery rate + latency, exposed to the viewer's auto-quality.
+    let lastPingAt = 0, noPong = 0;
+    ws.on('pong', () => { if (lastPingAt) { linkState.rttMs = Date.now() - lastPingAt; noPong = 0; } });
+    const wsTx = { bytes: 0 };
+    const metricTimer = setInterval(() => {
+      linkState.txRateKbps = (wsTx.bytes * 8) / 1000;   // bytes in 1s -> kilobits/s
+      wsTx.bytes = 0;
+      lastPingAt = Date.now();
+      try { ws.ping(); noPong++; } catch (e) { lastPingAt = 0; }
+      // ~4s without a pong means the client's network died silently; drop the
+      // session so the VNC socket is freed and a fresh reconnect can succeed.
+      if (noPong >= 4) teardown('noPong');
+    }, 1000).unref();
+    // Single, idempotent teardown wired to every exit path (ws close/error and
+    // vnc end/error). This guarantees a dropped client never leaves a zombie
+    // half-open connection to x11vnc that would block the next viewer.
+    let ended = false;
+    function teardown(why) {
+      if (ended) return;
+      ended = true;
       clearInterval(rateTimer);
+      clearInterval(metricTimer);
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        try { ws.close(1000, 'bridge end'); } catch (_) {}
+      }
+      try { tcp.destroy(); } catch (_) {}
       L.info('ws session end', ip, 'reason=' + why);
-    };
+    }
     ws.on('message', (data) => { if (tcpReady) tcp.write(data); rxBytes += data.length; });
-    ws.on('close', (code, reason) => { cleanup('clientClose code=' + code + ' ' + reason); tcp.destroy(); });
-    ws.on('error', (e) => { L.warn('ws client error', ip, e.message); });
+    ws.on('close', (code) => { teardown('clientClose code=' + code); });
+    ws.on('error', (e) => { L.warn('ws client error', ip, e.message); teardown('clientError'); });
     tcp.on('connect', () => { tcpReady = true; L.debug('vnc tcp connected', ip, VNC_HOST + ':' + VNC_PORT); clearRemoteKeyboard(); });
-    tcp.on('data', (d) => { txBytes += d.length; if (ws.readyState === WebSocket.OPEN) ws.send(d); });
-    tcp.on('end', () => { L.warn('vnc tcp closed by server', ip); if (ws.readyState === WebSocket.OPEN) ws.close(); });
-    tcp.on('error', (e) => { L.error('vnc tcp error', ip, e.message); try { ws.close(); } catch (_) {} });
+    tcp.on('data', (d) => { txBytes += d.length; wsTx.bytes += d.length; if (ws.readyState === WebSocket.OPEN) ws.send(d); });
+    tcp.on('end', () => { L.warn('vnc tcp closed by server', ip); teardown('vncEnd'); });
+    tcp.on('error', (e) => { L.error('vnc tcp error', ip, e.message); teardown('vncError'); });
   });
 });
 
