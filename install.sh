@@ -127,6 +127,12 @@ fi
 chown -R "$NX_USER":"$NX_USER" "$NX_DIR/src"
 ok "Directories and source in place at $NX_DIR."
 
+# Install the NexDesk admin-menu script (repo top-level) into the target.
+if [[ -f "$REPO_DIR/nexdesk-admin.sh" && "$REPO_DIR/nexdesk-admin.sh" != "$NX_DIR/nexdesk-admin.sh" ]]; then
+  install -m 0755 -o root -g root "$REPO_DIR/nexdesk-admin.sh" "$NX_DIR/nexdesk-admin.sh"
+  ok "Admin menu script installed at $NX_DIR/nexdesk-admin.sh."
+fi
+
 # ---------------------------------------------------------------------------
 # 4. Secrets
 #    On first install we generate a fresh webpath/password/hmac secret.
@@ -239,6 +245,13 @@ for svc in nexdesk-display nexdesk-vnc nexdesk-browser nexdesk-gateway; do
 done
 ok "Services started (display, vnc, browser, gateway)."
 
+# Register the `nexdesk` admin-menu command (idempotent).
+if [[ -f "$NX_DIR/nexdesk-admin.sh" ]]; then
+  ln -sf "$NX_DIR/nexdesk-admin.sh" /usr/local/bin/nexdesk
+  chmod 0755 "$NX_DIR/nexdesk-admin.sh"
+  ok "Admin menu registered — type 'nexdesk' (as root)."
+fi
+
 # ---------------------------------------------------------------------------
 # 7. Wait for readiness and print the owner link
 # ---------------------------------------------------------------------------
@@ -266,5 +279,6 @@ echo "  Keep this link + password secret. It is your only key to this session."
 echo "  Root / unknown URLs return 404 so the service stays hidden."
 echo
 echo "  Manage:  systemctl status nexdesk-{gateway,browser,vnc,display}"
+echo "  Admin menu:  sudo nexdesk      (change password/web path, info, uninstall)"
 echo "  Uninstall: sudo $NX_DIR/uninstall.sh  (when available)"
 echo "==============================================================================="

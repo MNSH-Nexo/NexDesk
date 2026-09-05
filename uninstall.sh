@@ -44,6 +44,10 @@ rm -f /etc/systemd/system/nexdesk-{display,vnc,browser,gateway}.service
 systemctl daemon-reload
 ok "Unit files removed."
 
+info "Removing 'nexdesk' admin command..."
+rm -f /usr/local/bin/nexdesk
+ok "Admin command removed."
+
 info "Removing install directory $NX_DIR ..."
 rm -rf "$NX_DIR"
 ok "Install directory removed."
