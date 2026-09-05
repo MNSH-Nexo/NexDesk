@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/nexdesk-logo.png" alt="NexDesk logo" width="180"></p>
+
 # NexDesk — Self-Hosted Virtual Cloud Browser
 
 **NexDesk** turns any Debian/Ubuntu server into your own private "browser in the cloud".
