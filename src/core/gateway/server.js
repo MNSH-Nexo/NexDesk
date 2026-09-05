@@ -28,10 +28,37 @@ const WEBPATH = readFirstLine(WEBPATH_FILE) || crypto.randomBytes(12).toString('
 if (!AUTH_PASS) { console.error('NexDesk password file missing: ' + PASS_FILE); process.exit(1); }
 if (!WEBPATH) { console.error('NexDesk webpath file missing: ' + WEBPATH_FILE); process.exit(1); }
 
+// ---------------- lightweight structured logger ----------------
+const LOG_LEVEL = (process.env.LOG_LEVEL || 'info').toLowerCase();
+const LEVELS = { debug:0, info:1, warn:2, error:3 };
+const _lev = LEVELS[LOG_LEVEL] !== undefined ? LEVELS[LOG_LEVEL] : LEVELS.info;
+function _ts(){ return new Date().toISOString(); }
+function log(level, ...args){
+  if (LEVELS[level] === undefined) level = 'info';
+  if (LEVELS[level] < _lev) return;
+  const out = (level==='error'||level==='warn') ? console.error : console.log;
+  out(`[${_ts()}] [${level.toUpperCase().padEnd(5)}]`, ...args);
+}
+const L = {
+  debug:  (...a)=>log('debug', ...a),
+  info:   (...a)=>log('info',  ...a),
+  warn:   (...a)=>log('warn',  ...a),
+  error:  (...a)=>log('error', ...a),
+};
 const BASE = '/' + WEBPATH;              // secret path prefix
 
 const app = express();
 const server = http.createServer(app);
+
+// Duration + status helper for request logging (debug level).
+app.use((req, res, next) => {
+  const t0 = Date.now();
+  res.on('finish', () => {
+    L.debug('http', req.method, req.originalUrl, '->', res.statusCode, (Date.now()-t0) + 'ms');
+  });
+  next();
+});
+
 
 function hash(pw, salt, secret) { return crypto.createHmac('sha256', secret).update(salt + pw).digest('hex'); }
 function authed(req) {
@@ -74,7 +101,9 @@ ${req.query.err ? '<div class="err">رمز عبور نادرست است.</div>' 
 router.post('/login', (req, res) => {
   const salt = crypto.randomBytes(16).toString('hex');
   const ok = crypto.timingSafeEqual(Buffer.from(hash(req.body.pw || '', salt, SECRET)), Buffer.from(hash(AUTH_PASS, salt, SECRET)));
-  if (!ok) return res.redirect(BASE + '/login?err=1');
+  const ip = req.socket.remoteAddress || '?';
+  if (!ok) { L.warn('login FAILED', ip); return res.redirect(BASE + '/login?err=1'); }
+  L.info('login OK', ip);
   const token = crypto.createHmac('sha256', SECRET).update(AUTH_PASS).digest('base64url');
   res.setHeader('Set-Cookie', 'ndauth=' + token + '; HttpOnly; Path=/; Max-Age=2592000; SameSite=Lax');
   res.redirect(BASE + '/');
@@ -84,8 +113,9 @@ router.post('/login', (req, res) => {
 router.get('/', (req, res) => {
   if (!authed(req)) return res.redirect(BASE + '/login');
   fs.stat(VIEWER_FILE, (e, st) => {
-    if (e || !st.isFile()) return res.status(500).send('Viewer not installed.');
+    if (e || !st.isFile()){ L.error('viewer file missing', VIEWER_FILE); return res.status(500).send('Viewer not installed.'); }
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    L.debug('serving viewer to', req.socket.remoteAddress);
     fs.createReadStream(VIEWER_FILE).pipe(res);
   });
 });
@@ -98,7 +128,10 @@ router.use('/novnc', (req, res, next) => {
   const rel = req.path === '/' ? 'vnc.html' : req.path;
   const file = path.normalize(path.join(NOVNC_DIR, rel));
   if (!file.startsWith(NOVNC_DIR)) return res.status(403).end();
-  fs.stat(file, (e, st) => { if (e || st.isDirectory()) return res.status(404).end(); res.sendFile(file); });
+  fs.stat(file, (e, st) => {
+    if (e || st.isDirectory()){ L.debug('novnc 404', rel, '->', file); return res.status(404).end(); }
+    res.sendFile(file);
+  });
 });
 
 app.use(BASE, router);
@@ -111,17 +144,34 @@ const wss = new WebSocketServer({ noServer: true });
 
 server.on('upgrade', (req, socket, head) => {
   const u = req.url || '';
-  if (!u.startsWith(BASE + '/vnc')) return socket.destroy();
-  if (!authed(req)) return socket.destroy();
+  const ip = req.socket.remoteAddress || '?';
+  const q = u.split('?')[0];
+  if (q !== BASE + '/vnc') return socket.destroy();
+  const ok = authed(req);
+  if (!ok) { L.warn('ws upgrade REJECTED (auth)', ip, q); return socket.destroy(); }
+  L.info('ws upgrade accepted', ip, q);
   wss.handleUpgrade(req, socket, head, (ws) => {
+    L.debug('ws client open', ip);
     const tcp = net.connect(VNC_PORT, VNC_HOST, () => {});
     let tcpReady = false;
-    ws.on('message', (data) => { if (tcpReady) tcp.write(data); });
-    ws.on('close', () => tcp.destroy());
-    tcp.on('connect', () => { tcpReady = true; });
-    tcp.on('data', (d) => { if (ws.readyState === WebSocket.OPEN) ws.send(d); });
-    tcp.on('error', () => ws.close());
+    let rxBytes = 0, txBytes = 0;   // client->server (rx) and server->client (tx) over the TCP/VNC side
+    const RATE_SEC = 5;
+    const rateTimer = setInterval(() => {
+      if (rxBytes + txBytes > 0) L.debug('ws traffic', ip, 'tx=' + txBytes + 'B rx=' + rxBytes + 'B /' + RATE_SEC + 's');
+      rxBytes = 0; txBytes = 0;
+    }, RATE_SEC * 1000).unref();
+    const cleanup = (why) => {
+      clearInterval(rateTimer);
+      L.info('ws session end', ip, 'reason=' + why);
+    };
+    ws.on('message', (data) => { if (tcpReady) tcp.write(data); rxBytes += data.length; });
+    ws.on('close', (code, reason) => { cleanup('clientClose code=' + code + ' ' + reason); tcp.destroy(); });
+    ws.on('error', (e) => { L.warn('ws client error', ip, e.message); });
+    tcp.on('connect', () => { tcpReady = true; L.debug('vnc tcp connected', ip, VNC_HOST + ':' + VNC_PORT); });
+    tcp.on('data', (d) => { txBytes += d.length; if (ws.readyState === WebSocket.OPEN) ws.send(d); });
+    tcp.on('end', () => { L.warn('vnc tcp closed by server', ip); if (ws.readyState === WebSocket.OPEN) ws.close(); });
+    tcp.on('error', (e) => { L.error('vnc tcp error', ip, e.message); try { ws.close(); } catch (_) {} });
   });
 });
 
-server.listen(PORT, '0.0.0.0', () => console.log('NexDesk gateway on port ' + PORT));
+server.listen(PORT, '0.0.0.0', () => L.info('NexDesk gateway listening on port ' + PORT + ' (log=' + LOG_LEVEL + ')'));

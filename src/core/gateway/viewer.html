@@ -190,7 +190,7 @@
   // ----- fit / actual size -----
   function toggleFit(){
     fitMode = !fitMode;
-    if(rfb){ rfb.scaleViewport = fitMode; rfb.updateClip(); }
+    if(rfb){ rfb.scaleViewport = fitMode; }
     $('fitLbl').textContent = fitMode ? 'Fit' : '100%';
     // recentre when at 100%
     screen.scrollLeft = 0; screen.scrollTop = 0;
@@ -238,13 +238,10 @@
     if(fs){ scheduleHide(); } else { showControls(); }
   });
 
-  // keep the canvas sized to its container
-  const screenWrap = document.getElementById('screenWrap');
-  if ('ResizeObserver' in window){
-    new ResizeObserver(() => { if(rfb) rfb.updateClip(); }).observe(screenWrap);
-  }
-  window.addEventListener('resize', () => { if(rfb) rfb.updateClip(); });
-  window.addEventListener('orientationchange', () => setTimeout(()=> rfb && rfb.updateClip(), 300));
+  // RFB already observes its container internally; on window resize we
+  // nudge it so Fit (scaleViewport) follows the new container size.
+  window.addEventListener('resize', () => { if(rfb){ rfb.scaleViewport = fitMode; } });
+  window.addEventListener('orientationchange', () => setTimeout(()=> { if(rfb){ rfb.scaleViewport = fitMode; } }, 300));
 
   connect();
 </script>
