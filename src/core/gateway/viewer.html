@@ -54,6 +54,15 @@
   @keyframes pulse{50%{opacity:.3}}
   #status{font-size:12px;font-weight:600;color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:30vw}
   .hint{font-size:11px;color:var(--ink-dim);opacity:.75;display:none;white-space:nowrap}
+  /* ---------- resource meter (RAM/CPU) ---------- */
+  .meter{display:flex;align-items:center;gap:6px;flex:none}
+  .mcell{display:flex;align-items:center;gap:6px;height:30px;padding:0 10px;border-radius:999px;flex:none;
+         background:rgba(255,255,255,.045);border:1px solid var(--chrome-border)}
+  .mcell .ic{width:13px;height:13px;stroke:var(--ink-dim);stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round;flex:none}
+  .mlabel{font-size:10px;font-weight:700;letter-spacing:.4px;color:var(--ink-dim)}
+  .mtrack{width:42px;height:5px;border-radius:3px;background:rgba(255,255,255,.09);overflow:hidden;flex:none}
+  .mfill{display:block;height:100%;width:0;border-radius:3px;background:var(--ok);transition:width .5s ease, background .4s ease}
+  .mval{font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink);white-space:nowrap;min-width:44px;text-align:right}
   /* ---------- buttons ---------- */
   .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--chrome-border);
        background:rgba(255,255,255,.05);color:var(--ink);font-size:13px;font-weight:600;
@@ -113,6 +122,7 @@
   @media (pointer:coarse){
     #topbar{margin-bottom:env(safe-area-inset-bottom)}
   }
+  @media (max-width:840px){ .meter{display:none} }
 </style>
 </head>
 <body>
@@ -123,6 +133,20 @@
       <div class="name">NexDesk</div>
     </div>
     <div class="spacer"></div>
+    <div class="meter" id="meter">
+      <div class="mcell" title="Host CPU usage">
+        <svg class="ic" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M9 7V4M15 7V4M9 20v-3M15 20v-3M7 9H4M7 15H4M20 9h-3M20 15h-3"/></svg>
+        <span class="mlabel">CPU</span>
+        <span class="mtrack"><i class="mfill" id="cpuFill"></i></span>
+        <span class="mval" id="cpuVal">–</span>
+      </div>
+      <div class="mcell" title="Host RAM usage">
+        <svg class="ic" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 4v3M12 4v3M15 4v3M9 17v3M12 17v3M15 17v3M4 9h3M4 12h3M4 15h3M17 9h3M17 12h3M17 15h3"/></svg>
+        <span class="mlabel">RAM</span>
+        <span class="mtrack"><i class="mfill" id="ramFill"></i></span>
+        <span class="mval" id="ramVal">–</span>
+      </div>
+    </div>
     <div class="chip"><span class="dot" id="dot"></span><span id="status">Connecting</span></div>
     <div class="hint" id="hint">tap to show controls</div>
     <button class="btn hide-sm" id="btnFit" title="Fit / actual size"><svg class="ic" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg><span id="fitLbl">Fit</span></button>
@@ -182,6 +206,19 @@
   let rfb = null;
   let fitMode = true;
 
+  // Never forward Caps Lock to the virtual desktop. Toggling it on your OS
+  // already flips letter case inside the character (keysym) we send, so keeping
+  // the remote's Caps Lock off prevents its lock state from drifting out of
+  // sync and corrupting case later on.
+  window.addEventListener('keydown', function (e) { if (e.code === 'CapsLock') { e.preventDefault(); e.stopPropagation(); } }, true);
+  window.addEventListener('keyup',   function (e) { if (e.code === 'CapsLock') { e.preventDefault(); e.stopPropagation(); } }, true);
+
+  // Return keyboard focus to the virtual desktop so keystrokes keep reaching it
+  // (a control-button click would otherwise leave focus on that button).
+  function focusRemote(){
+    if(rfb){ try { rfb.focus(); } catch(e){} }
+  }
+
   // ----- status helpers -----
   function setState(mode, text){
     dot.className = 'dot ' + mode;              // connecting | connected | off
@@ -215,7 +252,7 @@
         clipMsg('Text received from the virtual desktop.');
       }
     });
-    rfb.addEventListener('connect', () => setState('connected', 'Connected'));
+    rfb.addEventListener('connect', () => { setState('connected', 'Connected'); focusRemote(); });
     rfb.addEventListener('disconnect', (e) => {
       const clean = e.detail ? e.detail.clean : false;
       if(clean) setState('off', 'Disconnected');
@@ -264,10 +301,10 @@
   screen.addEventListener('pointermove', () => {}); // keep screen active
 
   // ----- wire up -----
-  $('btnFull').addEventListener('click', toggleFull);
-  $('btnFit').addEventListener('click', toggleFit);
-  $('btnRefresh').addEventListener('click', connect);
-  $('btnRetry').addEventListener('click', connect);
+  $('btnFull').addEventListener('click', () => { toggleFull(); setTimeout(focusRemote, 60); });
+  $('btnFit').addEventListener('click', () => { toggleFit(); focusRemote(); });
+  $('btnRefresh').addEventListener('click', () => connect());
+  $('btnRetry').addEventListener('click', () => connect());
   // ----- clipboard bridge (device <-> virtual desktop) -----
   const clipPanel = $('clipPanel'), clipText = $('clipText'), clipStatus = $('clipStatus');
   function clipMsg(m, isErr){
@@ -365,6 +402,34 @@
   // nudge it so Fit (scaleViewport) follows the new container size.
   window.addEventListener('resize', () => { if(rfb){ rfb.scaleViewport = fitMode; } });
   window.addEventListener('orientationchange', () => setTimeout(()=> { if(rfb){ rfb.scaleViewport = fitMode; } }, 300));
+
+  // ----- resource meter (host CPU / RAM) -----
+  const cpuFill = $('cpuFill'), cpuVal = $('cpuVal');
+  const ramFill = $('ramFill'), ramVal = $('ramVal');
+  function gaugeVal(fill, valEl, val, max, format){
+    const r = max > 0 ? Math.min(1, Math.max(0, val / max)) : 0;
+    fill.style.width = (r * 100) + '%';
+    fill.style.background = r < 0.6 ? 'var(--ok)' : r < 0.85 ? 'var(--warn)' : 'var(--err)';
+    valEl.textContent = format(val, max);
+  }
+  function fmtCpu(v){ return Math.round(v) + '%'; }
+  function fmtRam(usedMB, totalMB){
+    if(totalMB >= 1024) return (usedMB/1024).toFixed(2) + '/' + (totalMB/1024).toFixed(1) + 'G';
+    return Math.round(usedMB) + '/' + totalMB + 'M';
+  }
+  async function refreshStats(){
+    try{
+      const url = location.origin + '/' + webpath + '/api/stats';
+      const r = await fetch(url, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' });
+      if(!r.ok) return;
+      const d = await r.json();
+      if(!d || !d.ok) return;
+      gaugeVal(cpuFill, cpuVal, d.cpu, 100, fmtCpu);
+      gaugeVal(ramFill, ramVal, d.memMB.used, d.memMB.total, fmtRam);
+    }catch(e){ /* keep last known values */ }
+  }
+  setInterval(refreshStats, 2000);
+  refreshStats();
 
   connect();
 </script>

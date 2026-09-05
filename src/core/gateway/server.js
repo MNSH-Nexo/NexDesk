@@ -164,6 +164,93 @@ router.post('/clipboard', (req, res) => {
 });
 
 
+// ---- Resource stats (RAM/CPU) for the NexDesk top bar ----
+const STAT_WINDOW_MS = 450;
+function cpuSample(){
+  try{
+    const s = fs.readFileSync('/proc/stat', 'utf8');
+    const parts = s.split('\n')[0].trim().split(/\s+/);
+    let idle = (+parts[4] || 0) + (+parts[5] || 0);
+    let total = 0;
+    for(let i=1;i<parts.length;i++) total += (+parts[i] || 0);
+    return { idle, total };
+  }catch(e){ return null; }
+}
+function memInfoKB(){
+  const m = { total:0, avail:0, swTotal:0, swFree:0 };
+  try{
+    const s = fs.readFileSync('/proc/meminfo', 'utf8');
+    const g = (k) => { const mm = s.match(new RegExp('^' + k + ':\\s+(\\d+)\\s+kB', 'm')); return mm ? +mm[1] : 0; };
+    m.total = g('MemTotal'); m.avail = g('MemAvailable');
+    m.swTotal = g('SwapTotal'); m.swFree = g('SwapFree');
+  }catch(e){}
+  return m;
+}
+function procSnapshot(){
+  // Aggregate CPU ticks + RSS (KiB) for NexDesk's own processes, grouped by name.
+  const acc = {};
+  try{
+    const pids = fs.readdirSync('/proc').filter((d) => /^\d+$/.test(d));
+    for(const pid of pids){
+      let comm = '';
+      try{ comm = fs.readFileSync('/proc/' + pid + '/comm', 'utf8').trim(); }catch(e){ continue; }
+      let group = null;
+      if(comm === 'chrome') group = 'chrome';
+      else if(comm === 'Xvfb') group = 'xvfb';
+      else if(comm === 'x11vnc') group = 'vnc';
+      if(!group) continue;
+      try{
+        const stat = fs.readFileSync('/proc/' + pid + '/stat', 'utf8');
+        const c = stat.lastIndexOf(')');
+        const rest = stat.slice(c + 2).trim().split(' ');
+        // fields are 1-based after comm: rest[0] is state (field3).
+        // utime=field14 -> rest[11]; stime=field15 -> rest[12]; rss=field24 -> rest[21]
+        const utime = +rest[11] || 0, stime = +rest[12] || 0, rss = +rest[21] || 0;
+        const a = acc[group] = acc[group] || { ticks:0, rssKB:0 };
+        a.ticks += utime + stime;
+        a.rssKB += rss * 4; // pages (4 KiB) -> KiB
+      }catch(e){ continue; }
+    }
+  }catch(e){}
+  return acc;
+}
+router.get('/api/stats', (req, res) => {
+  if(!authed(req)) return res.status(401).json({ ok:false, error:'unauthorized' });
+  const mem = memInfoKB();
+  const s1 = cpuSample();
+  const p1 = procSnapshot();
+  setTimeout(() => {
+    const s2 = cpuSample();
+    const p2 = procSnapshot();
+    // Overall host CPU% across the measurement window.
+    let cpu = 0;
+    if(s1 && s2){
+      const dTotal = s2.total - s1.total;
+      const dIdle = s2.idle - s1.idle;
+      if(dTotal > 0) cpu = Math.max(0, Math.min(100, 100 * (dTotal - dIdle) / dTotal));
+    }
+    // Per-group CPU% across the same window.
+    const procs = [];
+    const dCpuTotal = (s1 && s2) ? (s2.total - s1.total) : 0;
+    for(const name in p2){
+      const prev = p1[name]; const cur = p2[name];
+      let pcpu = 0;
+      if(prev && dCpuTotal > 0) pcpu = Math.max(0, Math.min(100, 100 * (cur.ticks - prev.ticks) / dCpuTotal));
+      procs.push({ name, cpu: Math.round(pcpu * 10) / 10, memKB: cur.rssKB });
+    }
+    res.json({
+      ok: true,
+      cpu: Math.round(cpu * 10) / 10,
+      memMB: {
+        total: Math.round(mem.total / 1024),
+        used: Math.round((mem.total - mem.avail) / 1024),
+        swap: Math.round((mem.swTotal - mem.swFree) / 1024)
+      },
+      procs
+    });
+  }, STAT_WINDOW_MS);
+});
+
 // ---- noVNC static assets (under BASE) ----
 router.use('/novnc', (req, res, next) => {
   if (!authed(req)) return res.redirect(BASE + '/login');
