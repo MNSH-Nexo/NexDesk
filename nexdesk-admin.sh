@@ -320,6 +320,247 @@ do_uninstall() {
 }
 
 # ---------------------------------------------------------------------------
+# Update — pull the latest NexDesk release, keep link/password/profile
+# ---------------------------------------------------------------------------
+do_update() {
+  banner_top
+  echo -e "  ${B}${CY}Update NexDesk${R}"
+  line
+  echo -e "  Pulls the latest version from the NexDesk GitHub repository."
+  echo -e "  Your secret link, password and browser profile are KEPT."
+  echo
+  echo -e "  ${YE}The NexDesk services restart briefly during the update.${R}"
+  read -r -p "  Continue with the update now? [y/N]: " go
+  [[ "$go" == "y" || "$go" == "Y" ]] || { info "Cancelled."; return; }
+  echo
+  info "Running the official updater (downloads the latest NexDesk)..."
+  if bash <(curl -fsSL --max-time 60 https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/main/install.sh) update; then
+    echo
+    ok "Update finished."
+    show_status
+  else
+    fail "Update did not complete. See the log under $NX_DIR/logs/."
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Memory & performance panel
+# ---------------------------------------------------------------------------
+MEMDROP="/etc/systemd/system/nexdesk-browser.service.d/memory.conf"
+
+budget_text() {
+  if [ -f "$MEMDROP" ]; then
+    local h m
+    h="$(sed -n 's/^MemoryHigh=//p' "$MEMDROP")"
+    m="$(sed -n 's/^MemoryMax=//p' "$MEMDROP")"
+    echo "${h} soft / ${m} hard"
+  else
+    echo "none (browser may use as much as free RAM allows)"
+  fi
+}
+
+mem_show() {
+  echo
+  echo -e "  ${B}${CY}Live memory view${R}"
+  line
+  echo -e "  ${B}Memory:${R}"
+  free -h | sed 's/^/    /'
+  echo
+  local pids="" pid rss tot=0 cnt=0
+  pids="$(pgrep -x chrome 2>/dev/null || true)"
+  for pid in $pids; do
+    rss="$(awk '/^VmRSS:/{print $2}' "/proc/$pid/status" 2>/dev/null || echo 0)"
+    rss="${rss:-0}"; tot=$((tot + rss)); cnt=$((cnt + 1))
+  done
+  echo -e "  ${B}Chrome processes:${R} ${cnt}   · combined RAM: $((tot/1024)) MiB"
+  if [ "$cnt" -gt 0 ]; then
+    echo
+    echo -e "  ${B}Heaviest Chrome processes (RAM / process type):${R}"
+    for pid in $pids; do
+      rss="$(awk '/^VmRSS:/{print $2}' "/proc/$pid/status" 2>/dev/null || echo 0)"
+      echo "$((rss)) $pid"
+    done | sort -rn | head -8 | while read -r rss pid; do
+      tp="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -oE '\-\-type=[A-Za-z-]+' | head -1)"
+      printf '    %7d MiB   %s\n' "$((rss/1024))" "${tp:-browser}"
+    done
+  fi
+  echo
+  echo -e "  ${B}Browser RAM ceiling:${R} $(budget_text)"
+  line
+}
+
+mem_saver() {
+  echo
+  echo -e "  ${B}${CY}Memory Saver — free RAM from inactive tabs${R}"
+  line
+  echo -e "  When the server is under memory pressure Chrome already lets go of"
+  echo -e "  inactive background tabs by itself. Setting a browser RAM ceiling"
+  echo -e "  (option 3 in this panel) is what makes that happen early and safely."
+  echo
+  echo -e "  To make it even more eager, turn on Chrome's own Memory Saver once"
+  echo -e "  (this is the switch Google recommends for saving RAM):"
+  echo
+  echo -e "   ${B}1)${R} in the NexDesk browser, open a new tab"
+  echo -e "   ${B}2)${R} go to        ${WH}chrome://settings/performance${R}"
+  echo -e "   ${B}3)${R} turn         ${B}Memory Saver${R}   ON"
+  echo -e "   ${B}4)${R} optional: use 'Maximum' mode for the strongest savings"
+  echo
+  echo -e "  The setting is saved in your profile, so it survives restarts."
+  line
+}
+
+budget_set() {
+  echo
+  echo -e "  ${B}Set a RAM ceiling for the whole NexDesk browser${R}"
+  echo -e "  Current ceiling: $(budget_text)"
+  echo
+  echo -e "  When the browser reaches the ceiling, the OS reclaims inactive-tab"
+  echo -e "  memory (and can drop heavy background tabs) instead of letting a"
+  echo -e "  few tabs lock up the whole server."
+  echo
+  echo -e "  ${CY}1${R}  1024 MiB (1 GiB)    — a few lighter tabs"
+  echo -e "  ${CY}2${R}  1536 MiB (1.5 GiB)  — roomier, a good default"
+  echo -e "  ${CY}3${R}  2048 MiB (2 GiB)    — matches most of your RAM"
+  echo -e "  ${CY}4${R}  Custom value (MiB)"
+  echo -e "  ${D}0${R}  no ceiling"
+  read -r -p "  Choose [1-4/0]: " m
+  local v=""
+  case "$m" in
+    1) v=1024;; 2) v=1536;; 3) v=2048;;
+    4) read -r -p "  Ceiling in MiB (>= 512): " v;;
+    0) budget_clear; return;;
+    *) fail "Invalid choice."; return;;
+  esac
+  if [[ ! "$v" =~ ^[0-9]+$ ]] || [ "$v" -lt 512 ]; then fail "Enter a number of MiB >= 512."; return; fi
+  read -r -p "  Apply a ${v} MiB ceiling now (restarts the browser)? [y/N]: " go
+  [[ "$go" == "y" || "$go" == "Y" ]] || { info "Cancelled."; return; }
+  local high=$((v * 90 / 100)) max=$((v * 110 / 100))
+  mkdir -p /etc/systemd/system/nexdesk-browser.service.d
+  printf '[Service]\nMemoryHigh=%dM\nMemoryMax=%dM\n' "$high" "$max" > "$MEMDROP"
+  systemctl daemon-reload
+  systemctl restart nexdesk-browser
+  sleep 1
+  if systemctl is-active --quiet nexdesk-browser; then
+    ok "Ceiling applied: soft ${high}M / hard ${max}M."
+  else
+    fail "Browser did not restart after applying the ceiling."
+  fi
+}
+
+budget_clear() {
+  echo
+  if [ -f "$MEMDROP" ]; then
+    read -r -p "  Remove the RAM ceiling (restarts the browser)? [y/N]: " go
+    [[ "$go" == "y" || "$go" == "Y" ]] || { info "Cancelled."; return; }
+    rm -f "$MEMDROP"
+    rmdir /etc/systemd/system/nexdesk-browser.service.d 2>/dev/null || true
+    systemctl daemon-reload
+    systemctl restart nexdesk-browser
+    sleep 1
+    if systemctl is-active --quiet nexdesk-browser; then ok "Ceiling removed."; else fail "Browser did not restart."; fi
+  else
+    info "No RAM ceiling is currently set."
+  fi
+}
+
+zram_status() {
+  if swapon --show 2>/dev/null | grep -q '/dev/zram'; then
+    echo -e "  ${GR}zram compressed swap: ACTIVE${R}"
+    swapon --show 2>/dev/null | grep '/dev/zram' | sed 's/^/    /'
+  else
+    echo -e "  ${D}zram compressed swap: not active${R}"
+  fi
+}
+
+zram_on() {
+  echo
+  if swapon --show 2>/dev/null | grep -q '/dev/zram'; then ok "zram is already active."; zram_status; return; fi
+  local used=0
+  if [ -x /usr/lib/systemd/system-generators/zram-generator ]; then
+    printf '[zram0]\nzram-size = ram / 2\ncompression-algorithm = zstd\n' > /etc/systemd/zram-generator.conf
+    systemctl daemon-reload > /dev/null 2>&1
+    if systemctl start systemd-zram-setup@zram0.service 2>/dev/null; then used=1; ok "zram enabled (zram-generator)."; fi
+  fi
+  if [ "$used" -eq 0 ]; then
+    if ! command -v zramswap > /dev/null 2>&1; then
+      info "Installing zram-tools..."
+      if ! apt-get install -y zram-tools > /dev/null 2>&1; then
+        fail "Could not install zram-tools (no network / apt). Nothing changed."
+        zram_status
+        return
+      fi
+    fi
+    printf 'ALGO=zstd\nPERCENT=50\nPRIORITY=100\n' > /etc/default/zramswap
+    if systemctl enable --now zramswap 2>/dev/null || service zramswap start 2>/dev/null; then
+      ok "zram enabled (zram-tools)."
+    else
+      warn "The zram service did not start cleanly — please check the log."
+    fi
+  fi
+  echo; zram_status
+}
+
+zram_off() {
+  echo
+  if command -v zramswap > /dev/null 2>&1; then
+    systemctl disable --now zramswap 2>/dev/null || service zramswap stop 2>/dev/null || true
+  fi
+  if [ -f /etc/systemd/zram-generator.conf ]; then
+    systemctl stop systemd-zram-setup@zram0.service 2>/dev/null || true
+    rm -f /etc/systemd/zram-generator.conf
+    systemctl daemon-reload > /dev/null 2>&1
+  fi
+  for d in $(zramctl -l -n -o NAME 2>/dev/null || true); do
+    swapoff "/dev/$d" 2>/dev/null || true
+  done
+  ok "zram swap disabled."
+}
+
+zram_menu() {
+  banner_top
+  echo -e "  ${B}${CY}Memory & performance > zram swap${R}"
+  line
+  zram_status
+  echo
+  echo -e "  ${CY}1${R}  Enable zram (compressed RAM swap)"
+  echo -e "  ${CY}2${R}  Disable zram"
+  echo -e "  ${D}0${R}  Back"
+  read -r -p "  Choose [1/2/0]: " c
+  case "$c" in
+    1) zram_on;;
+    2) zram_off;;
+  esac
+}
+
+mem_panel() {
+  local c=""
+  while true; do
+    banner_top
+    echo -e "  ${B}${CY}Memory & performance${R}"
+    line
+    echo -e "  ${CY}1${R}  Live memory view + heaviest Chrome processes"
+    echo -e "  ${CY}2${R}  Memory Saver — free RAM from inactive tabs"
+    echo -e "  ${CY}3${R}  Set a RAM ceiling for the whole browser"
+    echo -e "  ${CY}4${R}  Remove the browser RAM ceiling"
+    echo -e "  ${CY}5${R}  zram — compressed swap to smooth memory spikes"
+    echo -e "  ${D}0${R}  Back to main menu"
+    echo
+    read -r -p "  Choose: " c
+    case "$c" in
+      1) mem_show;;
+      2) mem_saver;;
+      3) budget_set;;
+      4) budget_clear;;
+      5) zram_menu;;
+      0) return;;
+      *) echo -e "  ${RD}Invalid choice: $c${R}"; sleep 1; continue;;
+    esac
+    echo
+    read -r -p "  Press Enter to return to Memory & performance... " _
+  done
+}
+
+# ---------------------------------------------------------------------------
 # Main menu
 # ---------------------------------------------------------------------------
 menu() {
@@ -334,7 +575,9 @@ menu() {
   echo -e "  ${CY}5${R}  Change secret web path"
   echo
   echo -e "  ${CY}6${R}  View recent gateway log"
-  echo -e "  ${RD}7${R}  Full uninstall (remove NexDesk)"
+  echo -e "  ${CY}7${R}  Memory & performance (control RAM usage)"
+  echo -e "  ${CY}8${R}  Update NexDesk (keep link/password)"
+  echo -e "  ${RD}9${R}  Full uninstall (remove NexDesk)"
   echo -e "  ${D}0${R}  Exit"
   echo
 }
@@ -350,7 +593,9 @@ loop() {
       4) change_password;;
       5) change_webpath;;
       6) banner_top; show_log;;
-      7) do_uninstall;;
+      7) mem_panel;;
+      8) do_update;;
+      9) do_uninstall;;
       0|q|Q|exit) echo -e "  ${D}Bye.${R}"; exit 0;;
       *) echo -e "  ${RD}Invalid choice: $c${R}"; sleep 1;;
     esac
