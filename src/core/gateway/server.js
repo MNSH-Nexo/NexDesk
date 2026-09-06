@@ -427,7 +427,7 @@ router.get('/api/chooser', (req, res) => {
 });
 
 // POST: the visitor picked an uploaded file to feed to the site, or cancelled.
-router.post('/api/chooser', (req, res) => {
+router.post('/api/chooser', async (req, res) => {
   if(!authed(req)) return res.status(401).json({ ok:false, error:'unauthorized' });
   const action = req.body && req.body.action;
   if (action === 'cancel') {
@@ -441,7 +441,7 @@ router.post('/api/chooser', (req, res) => {
     if (!full.startsWith(MYFILES_DIR + path.sep)) return res.status(400).json({ ok:false, error:'invalid file' });
     let st = null; try { st = fs.statSync(full); } catch (e) {}
     if (!st || st.isDirectory()) return res.status(404).json({ ok:false, error:'file not found' });
-    const r = cdpInject(full);
+    const r = await cdpInject(full);
     return res.json(r.ok ? { ok:true } : { ok:false, error:r.error });
   }
   return res.status(400).json({ ok:false, error:'bad action' });
@@ -775,18 +775,115 @@ function setPendingChooser(pageId, params){
   LFILE.files('CHOP open (intercept) backendNodeId=' + params.backendNodeId + ' mode=' + params.mode);
   L.info('file chooser intercepted — waiting for viewer to pick a file');
 }
-function cdpInject(fullPath){
+// Send one CDP command and resolve with Chrome's full reply (success or error).
+// This lets us WAIT for the outcome instead of assuming a fire-and-forget send worked.
+function cdpCommand(page, method, params, timeoutMs){
+  return new Promise((resolve) => {
+    if (!page || !page.ws || page.ws.readyState !== WebSocket.OPEN){
+      resolve({ error: { message: 'no target' } }); return;
+    }
+    const id = ++page.seq;
+    const timer = setTimeout(() => { page.reqs.delete(id); resolve({ error: { message: 'cdp timeout' } }); }, timeoutMs || 6000);
+    page.reqs.set(id, (m) => { clearTimeout(timer); resolve(m); });
+    try { page.ws.send(JSON.stringify({ id, method, params: params || {} })); }
+    catch (e) { clearTimeout(timer); page.reqs.delete(id); resolve({ error: { message: 'cdp send failed' } }); }
+  });
+}
+// Locate the page's live file input (the one a user would click) and return its objectId.
+async function cdpDiscoverInput(page){
+  const expr = `(function(){
+    var all = Array.prototype.slice.call(document.querySelectorAll('input[type=file]'));
+    if (!all.length) return null;
+    var nonFolder = all.filter(function(e){ return !e.hasAttribute('webkitdirectory') && !e.hasAttribute('directory'); });
+    var pool = nonFolder.length ? nonFolder : all;
+    var hinted = pool.filter(function(e){ return /file|upload|input|browse/i.test((e.id||'') + ' ' + (e.name||'')); });
+    var sel = (hinted.length ? hinted : pool);
+    return sel[sel.length - 1];
+  })()`;
+  const r = await cdpCommand(page, 'Runtime.evaluate', { expression: expr }, 6000);
+  return (r && r.result && r.result.result && r.result.result.objectId) ? r.result.result.objectId : null;
+}
+// Prove the file really landed: ask the page whether any live file input now
+// holds our file. Chrome can answer "success" for a stale backendNodeId that
+// after a navigation points at a different node, so a bare success reply is
+// not proof — this verification is.
+async function cdpHasFile(page, fname){
+  const r = await cdpCommand(page, 'Runtime.evaluate', {
+    expression: '(function(){' +
+      'var want=' + JSON.stringify(fname) + ';' +
+      'var els=Array.prototype.slice.call(document.querySelectorAll("input[type=file]"));' +
+      'for(var i=0;i<els.length;i++){' +
+      '  var fl=els[i].files;' +
+      '  if(fl){ for(var j=0;j<fl.length;j++){ if(fl[j].name===want) return true; } }' +
+      '}' +
+      'return false;' +
+    '})()',
+    returnByValue: true,
+  }, 4000);
+  return !!(r && r.result && r.result.result && r.result.result.value === true);
+}
+// Deliver the chosen file into the site that opened the chooser. Instead of
+// trusting one node reference blindly, this waits for Chrome's actual reply,
+// retries with a freshly-located input when the recorded one has gone stale,
+// and only reports success once a live input really accepted the file — so the
+// viewer is never told "sent" when nothing actually landed.
+async function cdpInject(fullPath){
   const p = cdp.pending;
   if (cdp._ttl){ clearTimeout(cdp._ttl); cdp._ttl = null; }
   cdp.pending = null;
   if (!p) return { ok:false, error:'no pending file request' };
   const page = cdp.pages.get(p.pageId);
-  if (!page || !page.ws || page.ws.readyState !== WebSocket.OPEN) return { ok:false, error:'browser target went away' };
-  const msg = JSON.stringify({ id: Date.now(), method: 'DOM.setFileInputFiles',
-    params: { backendNodeId: p.backendNodeId, files: [fullPath] } });
-  try { page.ws.send(msg); } catch (e) { return { ok:false, error:'injection send failed' }; }
-  LFILE.files('INJECT name=' + path.basename(fullPath) + ' into page=' + p.pageId);
-  L.info('file injected into virtual page', path.basename(fullPath));
+  if (!page || !page.ws || page.ws.readyState !== WebSocket.OPEN)
+    return { ok:false, error:'The browser page changed — please click the site’s “choose file” again.' };
+  const fname = path.basename(fullPath);
+  const accepted = (reply) => !!reply && !reply.error &&
+    !(reply.result && reply.result.exceptionDetails) &&
+    !(reply.result && reply.result.exception);
+
+  let injected = false, lastErr = null;
+
+  // Wait for the page to reflect the change, then CONFIRM the file is really
+  // there (see cdpHasFile) before trusting the reply. A stale backendNodeId
+  // can come back "success" after the site navigated and reuse a new node.
+  const settle = async (errLabel) => {
+    await new Promise((rs) => setTimeout(rs, 350));
+    if (await cdpHasFile(page, fname)) return true;
+    lastErr = errLabel;
+    return false;
+  };
+
+  // Primary: the exact input Chrome associated with the open chooser.
+  if (p.backendNodeId != null){
+    const r = await cdpCommand(page, 'DOM.setFileInputFiles',
+      { backendNodeId: p.backendNodeId, files: [fullPath] }, 8000);
+    if (accepted(r)) injected = await settle('input no longer valid (page changed?)');
+    else lastErr = (r && r.error && r.error.message) || 'input no longer available';
+    L.debug('inject primary', fname, JSON.stringify(r).slice(0,120));
+  }
+
+  // Repair: an SPA may re-render its control between the click and the moment
+  // you press Send, invalidating the recorded node. Re-locate the input that is
+  // actually live in the page right now and place the file there.
+  if (!injected){
+    try {
+      const objectId = await cdpDiscoverInput(page);
+      if (objectId){
+        const r = await cdpCommand(page, 'DOM.setFileInputFiles', { objectId, files: [fullPath] }, 8000);
+        if (accepted(r)) injected = await settle('input not writable');
+        else lastErr = (r && r.error && r.error.message) || 'input not writable';
+        L.debug('inject fallback', fname, JSON.stringify(r).slice(0,120));
+      } else lastErr = 'no file input found on the page';
+    } catch (e) { lastErr = (e && e.message) || 'discovery failed'; }
+  }
+
+  if (!injected){
+    LFILE.files('INJECT FAIL name=' + fname + ' page=' + p.pageId + ' reason=' + (lastErr || 'unknown'));
+    L.info('file injection FAILED', fname, lastErr);
+    return { ok:false, error:'The site did not accept the file (' + (lastErr || 'unknown') + '). If it needs a real interaction, use its own upload — otherwise choose a different site.' };
+  }
+
+  LFILE.files('INJECT name=' + fname + ' page=' + p.pageId + ' mode=' + p.mode);
+  L.info('file injected into virtual page', fname);
   return { ok:true };
 }
 async function cdpPoll(){
@@ -799,18 +896,23 @@ async function cdpPoll(){
     if (cdp.pages.has(t.id)) continue;
     let ws;
     try { ws = new WebSocket(t.webSocketDebuggerUrl); } catch (e) { continue; }
-    const rec = { id: t.id, ws };
+    const rec = { id: t.id, ws, reqs: new Map(), seq: 1000 };
     ws.on('open', () => {
       cdp.enabled = true;
       try {
-        ws.send(JSON.stringify({ id: 1, method: 'DOM.enable' }));
-        ws.send(JSON.stringify({ id: 2, method: 'Page.enable' }));
-        ws.send(JSON.stringify({ id: 3, method: 'Page.setInterceptFileChooserDialog', params: { enabled: true } }));
+        ws.send(JSON.stringify({ id: ++rec.seq, method: 'DOM.enable' }));
+        ws.send(JSON.stringify({ id: ++rec.seq, method: 'Page.enable' }));
+        ws.send(JSON.stringify({ id: ++rec.seq, method: 'Runtime.enable' }));
+        ws.send(JSON.stringify({ id: ++rec.seq, method: 'Page.setInterceptFileChooserDialog', params: { enabled: true } }));
       } catch (e) {}
       L.debug('cdp attached page target', t.id);
     });
     ws.on('message', (data) => {
       let m = null; try { m = JSON.parse(String(data)); } catch (e) { return; }
+      // Route awaited command replies (see cdpCommand) before handling events.
+      if (m && m.id && rec.reqs.has(m.id)) {
+        const fn = rec.reqs.get(m.id); rec.reqs.delete(m.id); fn(m); return;
+      }
       if (m && m.method === 'Page.fileChooserOpened') setPendingChooser(t.id, m.params || {});
     });
     ws.on('close', () => { cdp.pages.delete(t.id); if (!cdp.pages.size) cdp.enabled = false; });

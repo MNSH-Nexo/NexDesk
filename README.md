@@ -117,7 +117,7 @@ No need to download the repo or even have it on the machine. On any Debian/Ubunt
 server with `curl` (and `sudo` for the privileged steps) just run:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/master/install.sh)
 ```
 
 That single command fetches the installer, downloads the NexDesk source, asks you
@@ -132,7 +132,7 @@ self-signed certificate) and the **password** — keep them secret.
 > self-signed, your browser asks you to accept it once — that is normal and safe. Disable
 > it with `--no-https` (or `NX_HTTPS=off`).
 
-> The command pulls the installer from this repository's `main` branch, so the
+> The command pulls the installer from this repository's `master` branch, so the
 > repository must be **publicly readable** for installs on other servers to work.
 
 > Non-interactive runs (e.g. `curl -fsSL <url> | sudo bash`) skip the questions
@@ -142,13 +142,13 @@ self-signed certificate) and the **password** — keep them secret.
 **Update NexDesk** (keeps your link, password and browser profile):
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/main/install.sh) update
+bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/master/install.sh) update
 ```
 
 **Remove NexDesk completely:**
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/main/install.sh) uninstall
+bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/master/install.sh) uninstall
 ```
 
 **Custom install from a checkout**
@@ -199,7 +199,7 @@ and port, and finally shows your personal HTTP **and** HTTPS links.
 Remove NexDesk from any server without a local copy:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/main/install.sh) uninstall
+bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/master/install.sh) uninstall
 ```
 
 From a checkout, the same thing (stops the services, removes the units, the
