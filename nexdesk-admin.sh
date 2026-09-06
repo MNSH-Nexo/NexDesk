@@ -294,9 +294,11 @@ do_uninstall() {
   echo
   echo -e "  ${YE}Your Chrome profile, sessions and downloads will be deleted.${R}"
   echo
-  read -r -p "  Type  ${B}UNINSTALL${R}  to confirm: " c
+  echo -e -n "  Type  ${B}UNINSTALL${R}  to confirm: "
+  read -r c
   [[ "$c" == "UNINSTALL" ]] || { info "Cancelled — nothing was removed."; return; }
-  read -r -p "  Last chance. Type  ${B}UNINSTALL${R}  again: " c2
+  echo -e -n "  Last chance. Type  ${B}UNINSTALL${R}  again: "
+  read -r c2
   [[ "$c2" == "UNINSTALL" ]] || { info "Cancelled — nothing was removed."; return; }
   echo
   rm -f /usr/local/bin/nexdesk
