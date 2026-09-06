@@ -515,8 +515,15 @@ NX_GATEWAY_DIR="$NX_DIR/src/core/gateway"
 [[ -f "$NX_GATEWAY_DIR/package.json" ]] || die "Gateway package.json missing under $NX_GATEWAY_DIR — cannot install dependencies."
 _nx_deps_ok=0
 for _nx_attempt in 1 2; do
+  # npm runs as root here, so a hardened umask (e.g. 077) can leave node_modules
+  # unreadable for the gateway's service user -> "Cannot find module 'express'"
+  # even though the install reported success. Force open permissions, then
+  # verify by actually LOADING the modules as the gateway user (the real
+  # runtime check — not just a root-level directory peek).
   if (cd "$NX_GATEWAY_DIR" && npm install --no-audit --no-fund --include=dev >>"${LOG_FILE:-/dev/null}" 2>&1) \
-     && [[ -d "$NX_GATEWAY_DIR/node_modules/express" && -d "$NX_GATEWAY_DIR/node_modules/ws" ]]; then
+     && chown -R "$NX_USER":"$NX_USER" "$NX_GATEWAY_DIR/node_modules" \
+     && chmod -R a+rX "$NX_GATEWAY_DIR/node_modules" \
+     && runuser -u "$NX_USER" -- bash -c "cd '$NX_GATEWAY_DIR' && node -e \"require('express');require('ws')\"" >>"${LOG_FILE:-/dev/null}" 2>&1; then
     _nx_deps_ok=1
     break
   fi
@@ -524,7 +531,7 @@ for _nx_attempt in 1 2; do
   sleep 3
 done
 if [[ "$_nx_deps_ok" != "1" ]]; then
-  die "Gateway dependencies failed to install (express/ws are missing under $NX_GATEWAY_DIR/node_modules). Check the install log and your network access to https://registry.npmjs.org, then run: cd $NX_GATEWAY_DIR && npm install && systemctl restart nexdesk-gateway"
+  die "Gateway dependencies failed to install or could not be loaded by the gateway user (express/ws). Check the install log and your network access to https://registry.npmjs.org, then re-run the same install command."
 fi
 ok "Gateway dependencies installed (express + ws)."
 
