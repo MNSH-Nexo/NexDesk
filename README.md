@@ -32,7 +32,10 @@ machine and **survives restarts**, so it works like a real desktop you can reach
   layouts) that types into the virtual desktop through the same keysym path as the physical
   keyboard; it overlays the viewer only and never appears on the remote screen. It includes a
   **symbols layer (123/ABC)** for both languages, a **ZWNJ (half-space) key** for Persian, and
-  **Tab / Esc**, a hold-to-repeat Backspace, and no long-press context menus.
+  **Tab / Esc**, a hold-to-repeat Backspace, and no long-press context menus. It shows itself
+  automatically after connecting and whenever you tap the virtual screen; a floating keyboard
+  button keeps it one tap away even when the top bar is hidden, and it never auto-dismisses
+  while you type.
 - **Mobile-optimized viewer** — on touch screens the top bar scrolls horizontally, hides the
   duplicate quality read-out, and **auto-hides 4s after connecting** (any tap brings it back,
   with a floating hint); the screen is **fit to width** by default, **double-tap or a floating
