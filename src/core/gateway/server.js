@@ -22,6 +22,30 @@ const WEBPATH_FILE = process.env.WEBPATH_FILE || '/opt/nexdesk/config/webpath.tx
 const SECRET_FILE = process.env.SECRET_FILE || '/opt/nexdesk/.secret';
 const VIEWER_FILE = process.env.VIEWER_FILE || '/opt/nexdesk/src/core/gateway/viewer.html';
 
+// ---- NexDesk "My Files" + file management (upload/download/list/delete) ----
+// A clean, dedicated folder on the virtual desktop (owned by the nexdesk user)
+// so files uploaded from the visitor's machine also appear inside the virtual
+// browser's own file picker under /home/nexdesk/MyFiles.
+const MYFILES_DIR = process.env.MYFILES_DIR || '/home/nexdesk/MyFiles';
+const MYFILES_MAX_UPLOAD = parseInt(process.env.MYFILES_MAX_MB || '2048', 10) * 1024 * 1024; // default 2 GiB per file
+const LOG_DIR = process.env.LOG_DIR || '/opt/nexdesk/logs';
+
+// ---- Live audio bridge (virtual desktop sound -> visitor's browser) ----
+// PulseAudio (run by nexdesk-audio.service) exposes the mixed desktop sound on
+// a monitor source. The gateway spawns one `parec` capture per listening viewer
+// and streams raw PCM frames over an authenticated WebSocket. Config knobs let
+// an operator tune the default capture format without a redeploy.
+const AUDIO_RUNTIME_DIR = process.env.AUDIO_RUNTIME_DIR || '/run/nexdesk-audio';
+const AUDIO_SINK = process.env.AUDIO_SINK || 'nxsink';
+const AUDIO_SOURCE = process.env.AUDIO_SOURCE || (AUDIO_SINK + '.monitor');
+const AUDIO_DEFAULT_RATE = parseInt(process.env.AUDIO_RATE || '44100', 10);
+const AUDIO_DEFAULT_CHANNELS = parseInt(process.env.AUDIO_CHANNELS || '1', 10);
+const AUDIO_MAX_RATE = 96000;
+const AUDIO_MIN_RATE = 8000;
+// When no audio client is connected we do not run the capture at all, so a quiet
+// idle server burns no extra CPU on its single core.
+const AUDIO_IDLE_POLL_MS = 250;
+
 // Optional self-signed HTTPS listener (HTTP and HTTPS are served together).
 const HTTPS_PORT = parseInt(process.env.HTTPS_PORT || '0', 10);
 const TLS_KEY   = process.env.TLS_KEY   || '/opt/nexdesk/config/tls/key.pem';
@@ -87,6 +111,83 @@ const L = {
   error:  (...a)=>log('error', ...a),
 };
 const BASE = '/' + WEBPATH;              // secret path prefix
+
+// ---- file-backed operational logs (append-only, for easier debugging) ----
+try { fs.mkdirSync(LOG_DIR, { recursive: true }); } catch (e) {}
+function writeLogFile(file, line){
+  try { fs.appendFileSync(path.join(LOG_DIR, file), '[' + new Date().toISOString() + '] ' + line + '\n'); }
+  catch (e) {}
+}
+const LFILE = {
+  files:  (s) => writeLogFile('files.log',  s),
+  upload: (s) => writeLogFile('upload.log', s),
+  audio:  (s) => writeLogFile('audio.log',  s),
+};
+
+// ---- My Files path-safety + listing helpers ----
+function safeFileName(name){
+  if (typeof name !== 'string') return null;
+  let n = name.replace(/\\/g, '/').split('/').pop() || '';
+  n = n.replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  if (!n || n === '.' || n === '..' || n === '/' || n.length > 255) return null;
+  // reject absolute-ish and traversal leftovers after basename split
+  if (n.includes('/') || n.includes('\0')) return null;
+  return n;
+}
+function safeRelPath(name){
+  const n = safeFileName(name);
+  if (!n) return null;
+  const full = path.resolve(MYFILES_DIR, n);
+  if (full !== MYFILES_DIR && !full.startsWith(MYFILES_DIR + path.sep)) return null; // must stay inside
+  return { rel: n, full };
+}
+function ensureMyFiles(){
+  try { fs.mkdirSync(MYFILES_DIR, { recursive: true }); return true; }
+  catch (e) { L.error('cannot create MyFiles dir', MYFILES_DIR, e.message); return false; }
+}
+function sweepOrphanParts(){
+  // Best-effort cleanup of temp uploads (.nx-upload-*.part) left behind by
+  // interrupted transfers, so a dropped connection never leaves clutter on disk.
+  try {
+    const now = Date.now();
+    for (const f of fs.readdirSync(MYFILES_DIR)) {
+      if (!/^\.nx-upload-.*\.part$/.test(f)) continue;
+      try {
+        const full = path.join(MYFILES_DIR, f);
+        if (now - fs.statSync(full).mtimeMs > 60000) fs.unlinkSync(full);
+      } catch (e) {}
+    }
+  } catch (e) {}
+}
+sweepOrphanParts();
+const TYPE_BY_EXT = {
+  '.png': 'image','.jpg':'image','.jpeg':'image','.gif':'image','.webp':'image','.svg':'image','.bmp':'image','.ico':'image','.avif':'image','.heic':'image',
+  '.mp4':'video','.webm':'video','.mkv':'video','.mov':'video','.avi':'video','.m4v':'video','.mpg':'video','.mpeg':'video',
+  '.mp3':'audio','.wav':'audio','.ogg':'audio','.flac':'audio','.m4a':'audio','.aac':'audio','.opus':'audio',
+  '.pdf':'pdf','.doc':'doc','.docx':'doc','.xls':'sheet','.xlsx':'sheet','.ppt':'slides','.pptx':'slides','.odt':'doc','.ods':'sheet','.odp':'slides','.txt':'text','.md':'text','.csv':'sheet','.rtf':'text','.json':'code','.js':'code','.ts':'code','.html':'code','.css':'code','.xml':'code','.py':'code','.zip':'archive','.rar':'archive','.7z':'archive','.tar':'archive','.gz':'archive','.bz2':'archive','.xz':'archive',
+};
+function fileTypeIcon(name){
+  const i = String(name).toLowerCase().lastIndexOf('.');
+  const ext = i >= 0 ? String(name).slice(i) : '';
+  return TYPE_BY_EXT[ext] || 'file';
+}
+function listMyFiles(){
+  if (!ensureMyFiles()) return [];
+  try {
+    return fs.readdirSync(MYFILES_DIR).filter((f) => !f.startsWith('.')).map((f) => {
+      let st = null; try { st = fs.statSync(path.join(MYFILES_DIR, f)); } catch (e) {}
+      if (!st || st.isDirectory()) return null;
+      return { name: f, size: st.size, mtime: st.mtimeMs, type: fileTypeIcon(f) };
+    }).filter(Boolean).sort((a, b) => b.mtime - a.mtime);
+  } catch (e) { L.error('listMyFiles error', e.message); return []; }
+}
+function humanBytes(b){
+  if (!Number.isFinite(b) || b < 0) return '–';
+  if (b < 1024) return b + ' B';
+  const u = ['KB','MB','GB','TB']; let v = b, i = -1;
+  do { v /= 1024; i++; } while (v >= 1024 && i < u.length - 1);
+  return (v >= 100 ? Math.round(v) : Math.round(v * 10) / 10) + ' ' + u[i];
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -317,6 +418,101 @@ router.get('/api/version', (req, res) => {
   res.json({ ok:true, version: APP_VERSION });
 });
 
+// ---- My Files: list, upload (binary PUT), download, delete ----
+// All under BASE and cookie-authenticated. Uploads are streamed to a temporary
+// file then atomically renamed into place, so a dropped connection can never
+// leave a half-written file behind.
+router.get('/api/files', (req, res) => {
+  if (!authed(req)) return res.status(401).json({ ok:false, error:'unauthorized' });
+  const files = listMyFiles().map((f) => ({
+    name: f.name, size: f.size, sizeLabel: humanBytes(f.size), mtime: f.mtime, type: f.type,
+  }));
+  LFILE.files('LIST ok from ' + (req.socket.remoteAddress || '?') + ' -> ' + files.length + ' files');
+  L.debug('api/files', files.length, 'files');
+  res.json({ ok: true, files });
+});
+
+router.put('/api/files', (req, res) => {
+  if (!authed(req)) return res.status(401).json({ ok:false, error:'unauthorized' });
+  if (!ensureMyFiles()) return res.status(500).json({ ok:false, error:'storage unavailable' });
+  const ip = req.socket.remoteAddress || '?';
+  const name = safeFileName(req.query.name || req.headers['x-file-name'] || '');
+  if (!name) return res.status(400).json({ ok:false, error:'invalid file name' });
+  const target = path.resolve(MYFILES_DIR, name);
+  if (!target.startsWith(MYFILES_DIR + path.sep)) return res.status(400).json({ ok:false, error:'invalid file name' });
+  const declared = parseInt(req.headers['content-length'] || '0', 10);
+  if (declared > MYFILES_MAX_UPLOAD) {
+    LFILE.upload('REJECT size-limit name=' + name + ' declared=' + declared + ' from ' + ip);
+    return res.status(413).json({ ok:false, error:'file too large (max ' + (MYFILES_MAX_UPLOAD/1048576) + ' MiB)' });
+  }
+  const tmp = path.join(MYFILES_DIR, '.nx-upload-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex') + '.part');
+  const started = Date.now();
+  let got = 0, done = false, aborted = false;
+  const out = fs.createWriteStream(tmp, { flags: 'wx', mode: 0o644 });
+  function fail(code, msg, extra){
+    if (done) return; done = true; aborted = true;
+    try { out.destroy(); } catch (e) {}
+    try { req.destroy(); } catch (e) {}
+    try { fs.unlinkSync(tmp); } catch (e) {}
+    LFILE.upload('FAIL ' + msg + ' name=' + name + ' bytes=' + got + ' from ' + ip);
+    L.warn('upload fail', name, msg, extra || '');
+    if (!res.headersSent) res.status(code).json({ ok:false, error:msg });
+  }
+  req.on('data', (chunk) => {
+    if (aborted) return;
+    got += chunk.length;
+    if (got > MYFILES_MAX_UPLOAD) return fail(413, 'file too large');
+    if (out.writable) { try { out.write(chunk); } catch (e) {} }
+  });
+  req.on('error', () => fail(400, 'upload interrupted'));
+  req.on('aborted', () => fail(499, 'upload aborted (client closed)'));
+  out.on('error', (e) => fail(500, 'write error'));
+  req.on('end', () => {
+    if (aborted || done) return;
+    out.end(() => {
+      try { fs.renameSync(tmp, target); }
+      catch (e) { fail(500, 'finalize error'); return; }
+      done = true;
+      const secs = ((Date.now() - started) / 1000).toFixed(2);
+      LFILE.upload('OK name=' + name + ' bytes=' + got + ' secs=' + secs + ' from ' + ip);
+      L.info('upload ok', name, got, 'bytes in', secs + 's');
+      res.json({ ok:true, file:{ name, size: got, sizeLabel: humanBytes(got) } });
+    });
+  });
+});
+
+router.delete('/api/files/:name', (req, res) => {
+  if (!authed(req)) return res.status(401).json({ ok:false, error:'unauthorized' });
+  const rel = safeRelPath(decodeURIComponent(req.params.name || ''));
+  if (!rel) return res.status(400).json({ ok:false, error:'invalid name' });
+  try {
+    fs.unlinkSync(rel.full);
+    LFILE.files('DELETE ok name=' + rel.rel + ' from ' + (req.socket.remoteAddress || '?'));
+    L.info('file deleted', rel.rel);
+    return res.json({ ok:true });
+  } catch (e) {
+    if (e.code === 'ENOENT') return res.json({ ok:true });
+    LFILE.files('DELETE FAIL name=' + rel.rel + ' ' + e.message);
+    return res.status(500).json({ ok:false, error:'delete failed' });
+  }
+});
+
+router.get('/api/files/:name/download', (req, res) => {
+  if (!authed(req)) return res.status(401).end();
+  const rel = safeRelPath(decodeURIComponent(req.params.name || ''));
+  if (!rel) return res.status(400).end();
+  let st = null; try { st = fs.statSync(rel.full); } catch (e) {}
+  if (!st || st.isDirectory()) return res.status(404).end();
+  const ascii = rel.rel.replace(/[^\x20-\x7e]/g, '_');
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Length', st.size);
+  res.setHeader('Content-Disposition', 'attachment; filename="' + ascii + '"; filename*=UTF-8\'\'' + encodeURIComponent(rel.rel));
+  noStore(res);
+  LFILE.files('DOWNLOAD name=' + rel.rel + ' size=' + st.size + ' from ' + (req.socket.remoteAddress || '?'));
+  L.debug('file download', rel.rel);
+  fs.createReadStream(rel.full).pipe(res);
+});
+
 // ---- noVNC static assets (under BASE) ----
 router.use('/novnc', (req, res, next) => {
   if (!authed(req)) return res.redirect(BASE + '/login');
@@ -338,12 +534,114 @@ app.use((req, res) => res.status(404).type('text/plain').send('Not found.'));
 // ---- WebSocket <-> VNC bridge (only under BASE/vnc) ----
 const wss = new WebSocketServer({ noServer: true });
 
+// ===================== Live audio bridge =====================
+// Every listening viewer opens an authenticated WebSocket under BASE/audio. The
+// gateway spawns one `parec` capture (from the PulseAudio monitor of the virtual
+// desktop's sink) and forwards raw PCM int16 frames to that viewer. To save
+// bandwidth/CPU on a quiet desktop we drop near-digital-silence buffers — the
+// browser fills the gaps with silence locally, so you hear audio exactly when
+// there is audio and idle traffic stays ~zero.
+const AUDIO_SILENCE_THRESHOLD = parseInt(process.env.AUDIO_SILENCE || '12', 10); // int16 amplitude
+const audioRuntime = (function () {
+  try { fs.mkdirSync(AUDIO_RUNTIME_DIR, { recursive: true }); } catch (e) {}
+  return AUDIO_RUNTIME_DIR;
+})();
+function audioEnv(){
+  return Object.assign({}, process.env, {
+    PULSE_SERVER: 'unix:' + audioRuntime + '/pulse/native',
+    PULSE_RUNTIME_PATH: audioRuntime + '/pulse',
+    XDG_RUNTIME_DIR: audioRuntime,
+    HOME: process.env.HOME || '/home/nexdesk',
+  });
+}
+function clampInt(v, min, max, dflt){
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n)) return dflt;
+  return Math.max(min, Math.min(max, n));
+}
+function samplePeak(buf){
+  // int16 little-endian PCM -> max absolute sample amplitude
+  if (!buf || buf.length < 2) return 0;
+  let peak = 0;
+  const n = buf.length - (buf.length % 2);
+  for (let i = 0; i < n; i += 2){
+    const s = buf.readInt16LE(i);
+    const a = s < 0 ? -s : s;
+    if (a > peak){ if (a > 30000) return a; peak = a; }
+  }
+  return peak;
+}
+
+function handleAudioUpgrade(req, socket, head, ip){
+  let u = null; try { u = new URL(req.url, 'http://x'); } catch (e) { socket.destroy(); return; }
+  const q = (u.pathname || '');
+  if (q !== BASE + '/audio') return socket.destroy();
+  if (!authed(req)) { LFILE.audio('REJECT auth ' + ip); socket.destroy(); return; }
+  const rate = clampInt(u.searchParams.get('rate'), AUDIO_MIN_RATE, AUDIO_MAX_RATE, AUDIO_DEFAULT_RATE);
+  const channels = clampInt(u.searchParams.get('channels'), 1, 2, AUDIO_DEFAULT_CHANNELS);
+  const aSrv = new WebSocketServer({ noServer: true });
+  aSrv.handleUpgrade(req, socket, head, (ws) => {
+    const started = Date.now();
+    let loudBytes = 0, silentBytes = 0, chunks = 0;
+    let child = null, childExited = false, closed = false;
+    const env = audioEnv();
+    LFILE.audio('OPEN rate=' + rate + ' ch=' + channels + ' from ' + ip);
+    L.info('audio stream open', ip, rate + 'Hz/' + channels + 'ch');
+    ws.send(JSON.stringify({ type: 'config', rate, channels, format: 's16le' }), () => {});
+    function stop(why){
+      if (closed) return; closed = true;
+      const dur = ((Date.now() - started) / 1000).toFixed(1);
+      if (child) { try { child.kill('SIGTERM'); } catch (e) {} }
+      const kb = (loudBytes + silentBytes) / 1024;
+      LFILE.audio('CLOSE ' + why + ' dur=' + dur + 's loud=' + Math.round(loudBytes/1024) + 'KB silent=' + Math.round(silentBytes/1024) + 'KB from ' + ip);
+      L.info('audio stream end', ip, 'reason=' + why, 'dur=' + dur + 's', Math.round(kb) + 'KB');
+      try { aSrv.close(); } catch (e) {}
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING){
+        try { ws.close(1000, why); } catch (e) {}
+      }
+    }
+    ws.on('close', () => stop('clientClose'));
+    ws.on('error', (e) => { L.warn('audio ws error', ip, e.message); stop('clientError'); });
+    try {
+      child = spawn('parec', [
+        '--device=' + AUDIO_SOURCE, '--format=s16le', '--rate=' + rate, '--channels=' + channels,
+      ], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (e) { LFILE.audio('SPAWN ERROR ' + e.message); L.error('audio spawn error', e.message); stop('spawnError'); return; }
+    child.stdout.on('data', (d) => {
+      if (closed || ws.readyState !== WebSocket.OPEN) return;
+      chunks++;
+      const peak = samplePeak(d);
+      if (peak < AUDIO_SILENCE_THRESHOLD){ silentBytes += d.length; return; } // drop silence
+      loudBytes += d.length;
+      try { ws.send(d); } catch (e) { stop('sendError'); }
+    });
+    child.stderr.on('data', (d) => { LFILE.audio('parec stderr: ' + String(d).trim()); });
+    child.on('error', (e) => { L.warn('audio child error', ip, e.message); stop('childError'); });
+    child.on('exit', (code, sig) => {
+      childExited = true;
+      if (!closed && code !== 0){
+        LFILE.audio('parec EXIT code=' + code + ' sig=' + sig + ' — is the audio service (nexdesk-audio) up?');
+        L.warn('audio capture exited', ip, 'code=' + code, 'sig=' + sig);
+        stop('captureExited');
+      }
+    });
+    // periodic heartbeat so a half-open quiet stream is caught
+    const hb = setInterval(() => {
+      if (closed) return clearInterval(hb);
+      LFILE.audio('heartbeat from ' + ip + ' loudKB=' + Math.round(loudBytes/1024) + ' silentKB=' + Math.round(silentBytes/1024) + ' chunks=' + chunks);
+    }, 30000).unref();
+    ws._nxaudioStop = stop;
+    ws.on('close', () => { try { clearInterval(hb); } catch (e) {} });
+  });
+}
+
 // Shared by both the HTTP and (optional) HTTPS listeners, so a viewer over
 // either scheme can reach the same VNC bridge.
 function handleUpgrade(req, socket, head) {
   const u = req.url || '';
   const ip = req.socket.remoteAddress || '?';
   const q = u.split('?')[0];
+  if (q === BASE + '/audio') return handleAudioUpgrade(req, socket, head, ip);
   if (q !== BASE + '/vnc') return socket.destroy();
   const ok = authed(req);
   if (!ok) { L.warn('ws upgrade REJECTED (auth)', ip, q); return socket.destroy(); }

@@ -146,6 +146,89 @@
     #topbar{margin-bottom:env(safe-area-inset-bottom)}
   }
   @media (max-width:840px){ .meter{display:none} }
+  /* ---------- sound toggle state ---------- */
+  .btn.snd-on{color:#fff;border-color:rgba(62,207,142,.4);background:rgba(62,207,142,.12)}
+  .btn.snd-off{color:var(--ink-dim)}
+  .btn.snd-off .ic{stroke:#aab}
+  .btn.snd-sel{box-shadow:0 0 0 1px var(--brand2)}
+  /* ---------- My Files panel ---------- */
+  .files{position:absolute;right:14px;bottom:14px;width:430px;max-width:calc(100vw - 28px);
+        background:rgba(13,13,24,.96);border:1px solid var(--chrome-border);border-radius:16px;
+        backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);z-index:40;overflow:hidden;
+        box-shadow:0 24px 70px rgba(0,0,0,.6);display:flex;flex-direction:column;
+        transition:opacity .18s ease, transform .18s ease}
+  .files.hidden{opacity:0;pointer-events:none;transform:translateY(10px) scale(.99)}
+  .files-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:13px 14px 12px;
+              border-bottom:1px solid var(--chrome-border)}
+  .files-title{display:flex;gap:11px;min-width:0;align-items:center}
+  .files-mark{width:38px;height:38px;border-radius:11px;flex:none;display:flex;align-items:center;justify-content:center;
+              background:linear-gradient(135deg,var(--brand),var(--brand2));box-shadow:0 6px 18px rgba(124,92,255,.35)}
+  .files-mark svg{width:19px;height:19px;stroke:#fff;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .files-name{font-size:14px;font-weight:800;letter-spacing:.2px}
+  .files-sub{font-size:11px;color:var(--ink-dim);line-height:1.45;margin-top:2px}
+  .files-close{border:0;background:transparent;color:var(--ink-dim);font-size:20px;line-height:1;cursor:pointer;padding:2px 4px;flex:none}
+  .files-close:hover{color:var(--ink)}
+  .files-body{padding:12px;overflow:auto;max-height:min(58vh,520px)}
+  /* dropzone */
+  .dz{border:1.5px dashed rgba(255,255,255,.16);border-radius:13px;padding:16px 14px;text-align:center;cursor:pointer;
+      background:rgba(124,92,255,.05);transition:border-color .15s, background .15s}
+  .dz:hover,.dz.over{border-color:var(--brand2);background:rgba(57,208,255,.08)}
+  .dz svg{width:26px;height:26px;stroke:var(--brand2);fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;margin:0 auto 8px}
+  .dz-t{font-size:13px;color:var(--ink);font-weight:600}
+  .dz .link{color:var(--brand2);text-decoration:underline;cursor:pointer}
+  .dz-s{font-size:11px;color:var(--ink-dim);margin-top:5px;line-height:1.4}
+  .up-list{margin-top:10px;display:flex;flex-direction:column;gap:7px}
+  .up-item{display:flex;align-items:center;gap:10px;padding:7px 9px;border-radius:10px;background:rgba(255,255,255,.04);
+           border:1px solid var(--chrome-border)}
+  .up-item .up-name{flex:1;min-width:0;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .up-item .up-perc{font-size:11px;font-variant-numeric:tabular-nums;color:var(--ink-dim);flex:none}
+  .up-bar{height:4px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden;flex:none;width:90px}
+  .up-fill{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--brand),var(--brand2));transition:width .15s linear}
+  .up-item.ok .up-bar{background:var(--ok)} .up-item.ok .up-bar .up-fill{width:100%!important}
+  .up-item.err{background:rgba(255,107,107,.08);border-color:rgba(255,107,107,.3)}
+  .up-status{margin-left:auto;font-size:11px;color:var(--ok);flex:none;min-width:0}
+  .up-item.err .up-status{color:var(--err)}
+  .files-divider{height:1px;background:var(--chrome-border);margin:13px 0 10px}
+  .fl-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .fl-head span{font-size:11px;font-weight:700;letter-spacing:.5px;color:var(--ink-dim)}
+  .fl-refresh{border:0;background:rgba(255,255,255,.06);color:var(--ink-dim);width:26px;height:26px;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .fl-refresh svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .fl-refresh:hover{color:var(--ink)}
+  .file-grid{display:flex;flex-direction:column;gap:5px}
+  .fitem{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:10px;transition:background .12s}
+  .fitem:hover{background:rgba(255,255,255,.05)}
+  .ficon{width:34px;height:34px;border-radius:9px;flex:none;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;color:#fff}
+  .fmeta{flex:1;min-width:0}
+  .fname{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .finfo{font-size:11px;color:var(--ink-dim);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .factions{display:flex;gap:4px;flex:none;opacity:.0;transition:opacity .12s}
+  .fitem:hover .factions{opacity:1}
+  .fbtn{width:28px;height:28px;border:0;border-radius:8px;background:rgba(255,255,255,.06);color:var(--ink-dim);cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .fbtn svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .fbtn.dl:hover{color:var(--brand2)} .fbtn.del:hover{color:var(--err);background:rgba(255,107,107,.12)}
+  .fitem:hover .factions{opacity:1}
+  .file-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:22px 10px;color:var(--ink-dim)}
+  .file-empty svg{width:38px;height:38px;stroke:rgba(255,255,255,.2);fill:none;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round;margin-bottom:10px}
+  .file-empty .et{font-size:13px;font-weight:700;color:var(--ink)}
+  .file-empty .es{font-size:11.5px;margin-top:4px;line-height:1.5;max-width:240px}
+  .files-foot{margin-top:12px;font-size:10.5px;color:var(--ink-dim);line-height:1.5;text-align:center;background:rgba(124,92,255,.06);
+              border:1px solid rgba(124,92,255,.18);border-radius:9px;padding:7px 9px}
+  .ficon.t-image{background:linear-gradient(135deg,#3ecf8e,#2a9d6f)}
+  .ficon.t-video{background:linear-gradient(135deg,#7c5cff,#4f39d0)}
+  .ficon.t-audio{background:linear-gradient(135deg,#ff9f43,#e76b1a)}
+  .ficon.t-pdf{background:linear-gradient(135deg,#ff6b6b,#d63043)}
+  .ficon.t-archive{background:linear-gradient(135deg,#f6c453,#d99b1f)}
+  .ficon.t-code{background:linear-gradient(135deg,#39d0ff,#2a7fd0)}
+  .ficon.t-doc{background:linear-gradient(135deg,#6c8bff,#4557d0)}
+  .ficon.t-sheet{background:linear-gradient(135deg,#22c98a,#169e6a)}
+  .ficon.t-slides{background:linear-gradient(135deg,#ff8a65,#e05c36)}
+  .ficon.t-text{background:linear-gradient(135deg,#9aa0c4,#6b7199)}
+  .ficon.t-file{background:linear-gradient(135deg,#4a4f6b,#2f3350)}
+  @media (max-width:480px){
+    .files{right:8px;left:8px;bottom:8px;width:auto;max-width:none}
+    .files-body{max-height:56vh}
+  }
+  @media (hover:none){ .factions{opacity:1} .fbtn{background:rgba(255,255,255,.08)} }
 </style>
 </head>
 <body>
@@ -186,6 +269,8 @@
     <button class="btn hide-sm" id="btnFit" title="Fit / actual size"><svg class="ic" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg><span id="fitLbl">Fit</span></button>
     <button class="btn" id="btnFull" title="Fullscreen"><svg class="ic" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg></button>
     <button class="btn" id="btnClip" title="Clipboard — paste text between your computer and the virtual desktop"><svg class="ic" viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg></button>
+    <button class="btn" id="btnFiles" title="My Files — upload a file, then use it inside the virtual browser"><svg class="ic" viewBox="0 0 24 24"><path d="M12 4v11M8 11l4 4 4-4"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg></button>
+    <button class="btn" id="btnSound" title="Virtual browser sound — on/off"><svg class="ic" id="soundIc" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 6a9 9 0 0 1 0 12"/></svg></button>
     <button class="btn" id="btnRefresh" title="Reconnect"><svg class="ic" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg></button>
     <a class="btn danger" id="btnLogout" href="logout" title="Log out">Log out</a>
   </div>
@@ -208,6 +293,39 @@
       <div class="clip-copy"><button class="btn primary" id="clipPaste" title="Send this text to the virtual browser and paste it">Paste into virtual desktop</button></div>
       <div class="clip-copy"><button class="btn" id="clipCopy" title="Copy this text onto your computer's clipboard">Copy to my device</button></div>
       <div class="clip-tip">Copy on your computer, open this panel, then press “Paste into virtual desktop”. If it can’t read your device clipboard automatically, click the box and press Ctrl+V, then Paste.</div>
+    </div>
+
+    <div id="filesPanel" class="files hidden">
+      <div class="files-head">
+        <div class="files-title">
+          <div class="files-mark"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
+          <div style="min-width:0">
+            <div class="files-name">My Files</div>
+            <div class="files-sub">Upload from your computer — files land in a folder you can open inside the virtual browser.</div>
+          </div>
+        </div>
+        <button class="files-close" id="filesClose" title="Close" aria-label="Close">&times;</button>
+      </div>
+      <div class="files-body">
+        <div class="dz" id="dz" role="button" tabindex="0" aria-label="Upload files">
+          <svg viewBox="0 0 24 24"><path d="M12 16V7M8 11l4-4 4 4"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+          <div class="dz-t">Drop files here, or <span class="link">choose from your computer</span></div>
+          <div class="dz-s">Uploaded files appear in “My Files” on the virtual desktop.</div>
+          <input type="file" id="fileInput" multiple hidden>
+        </div>
+        <div id="upList" class="up-list"></div>
+        <div class="files-divider"></div>
+        <div class="fl-head"><span>On the server</span>
+          <button class="fl-refresh" id="flRefresh" title="Refresh list" aria-label="Refresh"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg></button>
+        </div>
+        <div id="fileGrid" class="file-grid"></div>
+        <div id="fileEmpty" class="file-empty">
+          <svg viewBox="0 0 24 24"><path d="M12 3v9m0 0 3-3m-3 3-3-3"/><path d="M5 13v6a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-6"/></svg>
+          <div class="et">No files yet</div>
+          <div class="es">Drop a file above to move it from your computer into your virtual browser.</div>
+        </div>
+        <div class="files-foot">Tip: in the virtual browser, click a site’s “Upload / Choose file” and pick your file from the My Files folder.</div>
+      </div>
     </div>
   </div>
 </div>
@@ -628,6 +746,252 @@
     const saved = localStorage.getItem('nexdesk_quality');
     if(saved && (saved === 'auto' || PRESETS[saved])){ qualityMode = saved; qSel.value = saved; }
   } catch(e){}
+
+  // ==========================================================================
+  // My Files — upload a file from the visitor's computer into the virtual
+  // browser. Files land in /home/nexdesk/MyFiles on the desktop, so the same
+  // folder also shows up inside the virtual browser's own file picker.
+  // ==========================================================================
+  const filesPanel = $('filesPanel'), fileInput = $('fileInput'), dzEl = $('dz'),
+        upList = $('upList'), fileGrid = $('fileGrid'), fileEmpty = $('fileEmpty');
+  const EXT_LABEL = { '.pdf':'PDF','.zip':'ZIP','.rar':'RAR','.7z':'7Z','.tar':'TAR','.gz':'GZ','.doc':'DOC','.docx':'DOCX',
+                      '.xls':'XLS','.xlsx':'XLSX','.ppt':'PPT','.pptx':'PPTX','.mp3':'MP3','.wav':'WAV','.mp4':'MP4','.webm':'WEBM',
+                      '.mov':'MOV','.txt':'TXT','.csv':'CSV','.md':'MD','.json':'JSON' };
+  function iconLabel(name){
+    const i = String(name).toLowerCase().lastIndexOf('.');
+    if (i < 0) return 'FILE';
+    const ext = String(name).slice(i).toLowerCase();
+    return EXT_LABEL[ext] || String(name).slice(i + 1).toUpperCase().slice(0, 4) || 'FILE';
+  }
+  function esc(s){ return String(s).replace(/[&<>"']/g, (c)=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+  function fmtDate(ms){
+    try{ const d = new Date(ms);
+      return d.toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+    }catch(e){ return ''; }
+  }
+  function apiUrl(path){ return location.origin + '/' + webpath + '/api' + path; }
+
+  function renderFileEmpty(count){
+    fileEmpty.style.display = count === 0 ? 'flex' : 'none';
+  }
+  function renderFiles(files){
+    fileGrid.innerHTML = '';
+    renderFileEmpty(files.length);
+    for (const f of files){
+      const item = document.createElement('div'); item.className = 'fitem';
+      const ic = document.createElement('div');
+      ic.className = 'ficon t-' + (f.type || 'file');
+      ic.textContent = iconLabel(f.name);
+      const meta = document.createElement('div'); meta.className = 'fmeta';
+      const nm = document.createElement('div'); nm.className = 'fname'; nm.textContent = f.name; nm.title = f.name;
+      const info = document.createElement('div'); info.className = 'finfo';
+      info.textContent = (f.sizeLabel || '') + (f.mtime ? '  ·  ' + fmtDate(f.mtime) : '');
+      meta.appendChild(nm); meta.appendChild(info);
+      const acts = document.createElement('div'); acts.className = 'factions';
+      const dl = document.createElement('button'); dl.className = 'fbtn dl'; dl.title = 'Download';
+      dl.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 4v11M8 11l4 4 4-4"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>';
+      dl.addEventListener('click', (e)=>{ e.stopPropagation();
+        const a = document.createElement('a'); a.href = apiUrl('/files/' + encodeURIComponent(f.name) + '/download');
+        a.download = f.name; document.body.appendChild(a); a.click(); a.remove();
+      });
+      const del = document.createElement('button'); del.className = 'fbtn del'; del.title = 'Delete';
+      del.innerHTML = '<svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6M14 11v6"/></svg>';
+      del.addEventListener('click', async (e)=>{ e.stopPropagation();
+        if(!window.confirm('Delete “' + f.name + '”? This removes it from the virtual desktop.')) return;
+        try{
+          const r = await fetch(apiUrl('/files/' + encodeURIComponent(f.name)), { method:'DELETE', credentials:'same-origin' });
+          if(r.ok){ item.remove(); renderFileEmpty(fileGrid.children.length); loadFiles(); }
+          else toast('Could not delete the file.');
+        }catch(err){ toast('Delete failed.'); }
+      });
+      acts.appendChild(dl); acts.appendChild(del);
+      item.appendChild(ic); item.appendChild(meta); item.appendChild(acts);
+      fileGrid.appendChild(item);
+    }
+  }
+  async function loadFiles(){
+    try{
+      const r = await fetch(apiUrl('/files'), { headers:{ 'Accept':'application/json' }, credentials:'same-origin' });
+      if(!r.ok) return;
+      const d = await r.json();
+      if(d && d.ok) renderFiles(d.files || []);
+    }catch(e){ /* silent: keep what we have */ }
+  }
+  function uploadOne(file){
+    const row = document.createElement('div'); row.className = 'up-item';
+    const name = document.createElement('div'); name.className = 'up-name'; name.textContent = file.name; name.title = file.name;
+    const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;align-items:center;gap:8px;flex:none';
+    const bar = document.createElement('i'); bar.className = 'up-bar'; bar.innerHTML = '<b class="up-fill"></b>';
+    const fill = bar.firstChild;
+    const perc = document.createElement('span'); perc.className = 'up-perc'; perc.textContent = '0%';
+    const st = document.createElement('span'); st.className = 'up-status'; st.textContent = '';
+    wrap.appendChild(bar); wrap.appendChild(perc); wrap.appendChild(st);
+    row.appendChild(name); row.appendChild(wrap);
+    upList.prepend(row);
+    const xhr = new XMLHttpRequest();
+    try{
+      xhr.open('PUT', apiUrl('/files?name=' + encodeURIComponent(file.name)), true);
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.setRequestHeader('X-File-Name', file.name);
+    }catch(e){ row.classList.add('err'); st.textContent = 'Error'; return; }
+    xhr.upload.onprogress = (ev) => {
+      if(ev.lengthComputable){
+        const p = Math.min(100, Math.round(ev.loaded / ev.total * 100));
+        fill.style.width = p + '%'; perc.textContent = p + '%';
+      }
+    };
+    xhr.onload = () => {
+      if(xhr.status === 200){
+        row.classList.add('ok'); fill.style.width = '100%'; perc.textContent = '100%'; st.textContent = 'Done';
+        setTimeout(()=>{ if(row.parentNode) row.parentNode.removeChild(row); }, 1300);
+      } else {
+        row.classList.add('err'); st.textContent = 'Failed (' + xhr.status + ')';
+        try{ const d = JSON.parse(xhr.responseText); if(d && d.error) st.textContent = d.error; }catch(e){}
+      }
+      loadFiles();
+    };
+    xhr.onerror = () => { row.classList.add('err'); st.textContent = 'Network error'; };
+    xhr.onabort = () => { row.classList.add('err'); st.textContent = 'Cancelled'; };
+    xhr.send(file);
+  }
+  function handleFiles(list){
+    if(!list || !list.length) return;
+    for(const f of list) uploadOne(f);
+    try{ fileInput.value = ''; }catch(e){}
+  }
+  function setDz(over){ dzEl.classList.toggle('over', !!over); }
+  dzEl.addEventListener('click', () => fileInput.click());
+  dzEl.addEventListener('keydown', (e) => { if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); fileInput.click(); } });
+  fileInput.addEventListener('change', () => handleFiles(fileInput.files));
+  ;['dragenter','dragover'].forEach(t => dzEl.addEventListener(t, (e)=>{ e.preventDefault(); setDz(true); }));
+  ;['dragleave','drop'].forEach(t => dzEl.addEventListener(t, (e)=>{ e.preventDefault(); setDz(false); }));
+  dzEl.addEventListener('drop', (e) => handleFiles(e.dataTransfer && e.dataTransfer.files));
+  $('flRefresh').addEventListener('click', loadFiles);
+
+  let filesOpen = false;
+  function toggleFiles(){
+    filesOpen = !filesOpen;
+    filesPanel.classList.toggle('hidden', !filesOpen);
+    if(filesOpen) loadFiles();
+    setTimeout(focusRemote, 60);
+  }
+  $('btnFiles').addEventListener('click', (e)=>{ e.stopPropagation(); toggleFiles(); });
+  $('filesClose').addEventListener('click', ()=>{ filesOpen=false; filesPanel.classList.add('hidden'); focusRemote(); });
+  document.addEventListener('pointerdown', (ev)=>{
+    if(!filesOpen) return;
+    if(filesPanel.contains(ev.target) || ev.target.id === 'btnFiles') return;
+    filesOpen = false; filesPanel.classList.add('hidden');
+  });
+
+  // ==========================================================================
+  // Live sound — stream the virtual browser's audio into this tab via Web Audio.
+  // ==========================================================================
+  const btnSound = $('btnSound');
+  let audioOn = true;
+  try{ audioOn = (localStorage.getItem('nexdesk_audio') || 'on') === 'on'; }catch(e){}
+  let actx = null, audioWs = null, aNode = null, ringCap = 0, ring = null,
+      ringTail = 0, ringCount = 0, aCfg = null, aTimer = null;
+  function renderSoundBtn(){
+    btnSound.classList.toggle('snd-on', audioOn);
+    btnSound.classList.toggle('snd-off', !audioOn);
+    btnSound.title = audioOn ? 'Virtual browser sound: on' : 'Virtual browser sound: off';
+  }
+  renderSoundBtn();
+  function ensureCtx(){
+    if(actx) return actx;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if(!AC) return null;
+    try{ actx = new AC(); }catch(e){ return null; }
+    return actx;
+  }
+  function stopAudio(why){
+    if(aTimer){ clearTimeout(aTimer); aTimer = null; }
+    if(audioWs){ try{ audioWs.onclose = null; audioWs.close(); }catch(e){} audioWs = null; }
+    if(aNode){ try{ aNode.disconnect(); }catch(e){} aNode = null; }
+    if(actx){ try{ if(actx.state !== 'closed') actx.close(); }catch(e){} actx = null; }
+    ring = null; ringCount = 0; ringCap = 0; aCfg = null;
+  }
+  function pushPCM(buf){
+    if(!aCfg || !ring) return;
+    const i16 = new Int16Array(buf);
+    const ch = aCfg.channels || 1;
+    const frames = Math.floor(i16.length / ch);
+    for(let i = 0; i < frames; i++){
+      let s = 0;
+      for(let c = 0; c < ch; c++) s += i16[i * ch + c];
+      const mono = (s / ch) / 32768;
+      ring[ringTail] = mono;
+      ringTail = (ringTail + 1) % ringCap;
+      if(ringCount < ringCap) ringCount++; else ringTail = (ringTail + ringCap - 1) % ringCap;
+    }
+    if(actx && actx.state === 'suspended'){ try{ actx.resume(); }catch(e){} }
+  }
+  function setupNode(){
+    if(!actx || !aCfg || aNode) return;
+    ringCap = Math.max(1024, Math.ceil(aCfg.rate * 5)); // ~5s buffer
+    ring = new Float32Array(ringCap); ringTail = 0; ringCount = 0;
+    try{
+      aNode = actx.createScriptProcessor(4096, 0, 1);
+      aNode.onaudioprocess = (ev) => {
+        const out = ev.outputBuffer.getChannelData(0);
+        const need = out.length;
+        const avail = Math.min(need, ringCount);
+        for(let i = 0; i < avail; i++) out[i] = ring[(ringTail + i) % ringCap];
+        for(let i = avail; i < need; i++) out[i] = 0;
+        ringTail = (ringTail + avail) % ringCap;
+        ringCount -= avail; if(ringCount < 0) ringCount = 0;
+      };
+      aNode.connect(actx.destination);
+    }catch(e){ aNode = null; }
+  }
+  function scheduleAudioReconnect(){
+    if(!audioOn) return;
+    if(aTimer || !connected || document.visibilityState === 'hidden') return;
+    aTimer = setTimeout(() => { aTimer = null; startAudio(); }, 1500);
+  }
+  function startAudio(){
+    if(!audioOn) return;
+    const ctx = ensureCtx();
+    if(!ctx) return;
+    stopAudio('restart');
+    ensureCtx();
+    if(actx.state === 'suspended'){ try{ actx.resume(); }catch(e){} }
+    const wsUrl2 = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/' + webpath +
+                   '/audio?rate=' + Math.round(actx.sampleRate) + '&channels=1';
+    try{ audioWs = new WebSocket(wsUrl2); }catch(e){ return; }
+    audioWs.binaryType = 'arraybuffer';
+    audioWs.onmessage = (ev) => {
+      if(typeof ev.data === 'string'){
+        try{ const c = JSON.parse(ev.data);
+          if(c && c.type === 'config'){ aCfg = { rate: c.rate || actx.sampleRate, channels: c.channels || 1 }; setupNode(); }
+        }catch(e){}
+      } else { pushPCM(ev.data); }
+    };
+    audioWs.onclose = () => { if(audioWs) audioWs = null; scheduleAudioReconnect(); };
+    audioWs.onerror = () => { try{ audioWs.close(); }catch(e){} };
+  }
+  function setAudio(on, manual){
+    audioOn = on;
+    try{ localStorage.setItem('nexdesk_audio', on ? 'on' : 'off'); }catch(e){}
+    renderSoundBtn();
+    if(on) startAudio();
+    else { stopAudio('muted'); }
+    if(manual){
+      toast(on ? '<b>Sound on</b><span class="upd">You’ll now hear the virtual browser.</span>'
+                : '<b>Sound off</b><span class="upd">Audio is muted.</span>', 2200);
+    }
+  }
+  btnSound.addEventListener('click', (e)=>{ e.stopPropagation(); setAudio(!audioOn, true); focusRemote(); });
+  // Autoplay policies need a real user gesture, so start (or resume) on first
+  // interaction if sound is enabled, and refresh a live stream when the tab is
+  // hidden and brought back.
+  window.addEventListener('pointerdown', () => { if(audioOn && actx && actx.state === 'suspended'){ try{ actx.resume(); }catch(e){} } });
+  window.addEventListener('pointerdown', () => { if(audioOn && !audioWs) startAudio(); });
+  document.addEventListener('visibilitychange', () => {
+    if(document.visibilityState === 'visible' && audioOn && !audioWs && connected){ startAudio(); }
+    if(document.visibilityState === 'hidden'){ /* stream continues */ }
+  });
+  if(audioOn) startAudio();
 
   connect();
 </script>

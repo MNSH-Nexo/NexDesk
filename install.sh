@@ -408,6 +408,8 @@ apt-get install -y -qq fonts-liberation libnss3 libnspr4 libatk1.0-0 \
   libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
   libxfixes3 libxrandr2 libgbm1 >/dev/null || true
 apt-get install -y -qq libasound2 libasound2t64 >/dev/null 2>&1 || true
+# PulseAudio drives live desktop audio capture (null sink "nxsink" -> parec).
+apt-get install -y -qq pulseaudio pulseaudio-utils >/dev/null 2>&1 || true
 ok "Runtime libraries handled."
 
 # ---------------------------------------------------------------------------
@@ -446,6 +448,9 @@ if ! id "$NX_USER" >/dev/null 2>&1; then
 fi
 mkdir -p "$NX_DIR"/{src,config,logs}
 install -d -o "$NX_USER" -g "$NX_USER" "$NX_DIR/config" "$NX_DIR/logs" "$NX_DIR/.chrome"
+# "My Files": the shared upload folder that also shows inside the virtual browser.
+NX_HOME="$(getent passwd "$NX_USER" | cut -d: -f6)"
+install -d -o "$NX_USER" -g "$NX_USER" "${NX_HOME:-/home/$NX_USER}/MyFiles" 2>/dev/null || true
 
 # Copy gateway source (unless we are already installing from inside the target,
 # in which case the source is already in place).
@@ -465,6 +470,12 @@ if [[ -f "$REPO_DIR/nexdesk-admin.sh" && "$REPO_DIR/nexdesk-admin.sh" != "$NX_DI
   install -m 0755 -o root -g root "$REPO_DIR/nexdesk-admin.sh" "$NX_DIR/nexdesk-admin.sh"
   ok "Admin menu script installed at $NX_DIR/nexdesk-admin.sh."
 fi
+
+# Provision launcher scripts into $NX_DIR/bin (e.g. the PulseAudio daemon helper).
+install -d -o root -g root "$NX_DIR/bin"
+for _nxbin in "$REPO_DIR/bin/nexdesk-audio.sh"; do
+  [[ -f "$_nxbin" ]] && install -m 0755 -o root -g root "$_nxbin" "$NX_DIR/bin/" 2>/dev/null || true
+done
 
 # ---------------------------------------------------------------------------
 # 4. Secrets
@@ -560,15 +571,38 @@ RestartSec=2
 WantedBy=multi-user.target
 UNIT
 
+cat > /etc/systemd/system/nexdesk-audio.service <<UNIT
+[Unit]
+Description=NexDesk PulseAudio null sink (virtual desktop sound)
+After=nexdesk-display.service
+
+[Service]
+Type=simple
+User=${NX_USER}
+Group=${NX_USER}
+RuntimeDirectory=nexdesk-audio
+RuntimeDirectoryMode=0750
+Environment=XDG_RUNTIME_DIR=/run/nexdesk-audio
+Environment=PULSE_RUNTIME_PATH=/run/nexdesk-audio/pulse
+ExecStart=${NX_DIR}/bin/nexdesk-audio.sh
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
 cat > /etc/systemd/system/nexdesk-browser.service <<UNIT
 [Unit]
 Description=NexDesk persistent browser (Chromium)
-After=nexdesk-display.service
+After=nexdesk-display.service nexdesk-audio.service
 Requires=nexdesk-display.service
 [Service]
 Type=simple
 User=${NX_USER}
 Environment=DISPLAY=:${DISPLAY_NUM}
+Environment=PULSE_SERVER=unix:/run/nexdesk-audio/pulse/native
+Environment=PULSE_RUNTIME_PATH=/run/nexdesk-audio/pulse
 ExecStart=${BROWSER_BIN} --user-data-dir=${NX_DIR}/.chrome --window-size=${BROWSER_RES} --window-position=0,0 ${BROWSER_OPTS} about:blank
 Restart=always
 RestartSec=3
@@ -607,11 +641,11 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-for svc in nexdesk-display nexdesk-vnc nexdesk-browser nexdesk-gateway; do
+for svc in nexdesk-display nexdesk-vnc nexdesk-audio nexdesk-browser nexdesk-gateway; do
   systemctl enable -q "$svc"
   systemctl restart "$svc"
 done
-ok "Services started (display, vnc, browser, gateway)."
+ok "Services started (display, vnc, audio, browser, gateway)."
 
 # Register the `nexdesk` admin-menu command (idempotent).
 if [[ -f "$NX_DIR/nexdesk-admin.sh" ]]; then
@@ -673,7 +707,7 @@ echo
 echo "  Keep these links + password secret. They are your only key to this session."
 echo "  Root / unknown URLs return 404 so the service stays hidden."
 echo
-echo "  Manage:  systemctl status nexdesk-{gateway,browser,vnc,display}"
+echo "  Manage:  systemctl status nexdesk-{gateway,browser,audio,vnc,display}"
 echo "  Admin menu:  sudo nexdesk      (change password/web path, info, uninstall)"
 echo "==============================================================================="
 [[ -n "$LOG_FILE" ]] && echo "  Full install log: $LOG_FILE"

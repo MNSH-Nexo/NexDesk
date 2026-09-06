@@ -1,13 +1,17 @@
 [Unit]
 Description=NexDesk persistent browser (Chromium)
-After=nexdesk-display.service
+After=nexdesk-display.service nexdesk-audio.service
 Requires=nexdesk-display.service
+
 [Service]
 Type=simple
 User=nexdesk
 Environment=DISPLAY=:99
+Environment=PULSE_SERVER=unix:/run/nexdesk-audio/pulse/native
+Environment=PULSE_RUNTIME_PATH=/run/nexdesk-audio/pulse
 ExecStart=/opt/nexdesk/bin/nexdesk-browser.sh
 Restart=always
 RestartSec=3
+
 [Install]
 WantedBy=multi-user.target
