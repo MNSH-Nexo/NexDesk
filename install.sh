@@ -397,7 +397,7 @@ maybe_swap
 # ---------------------------------------------------------------------------
 info "Updating package index and installing core dependencies..."
 apt_try update -qq
-apt_try install -y -qq xvfb x11vnc novnc websockify curl openssl xauth >/dev/null \
+apt_try install -y -qq xvfb x11vnc novnc websockify xdotool curl openssl xauth >/dev/null \
   || die "Core packages failed to install. See $LOG_FILE (or run apt-get update manually) and rerun."
 ok "Core packages installed."
 
@@ -569,7 +569,30 @@ fi
 # 6. Systemd units
 # ---------------------------------------------------------------------------
 info "Writing systemd service units..."
-BROWSER_OPTS="--disable-gpu --disable-dev-shm-usage --disable-software-rasterizer --no-first-run --no-default-browser-check --start-maximized --remote-debugging-port=9223 --remote-debugging-address=127.0.0.1"
+BROWSER_OPTS="--disable-gpu --disable-dev-shm-usage --disable-software-rasterizer --no-first-run --no-default-browser-check --force-device-scale-factor=1 --remote-debugging-port=9223 --remote-debugging-address=127.0.0.1 --remote-allow-origins=*"
+
+# Window fit helper — Xvfb has no window manager, so Chrome's window can end up
+# smaller than the display (older Chrome versions / saved profile bounds),
+# leaving a black strip on the right of the screen. It runs after the browser
+# starts and forces the Chrome window to exactly fill the display; it also
+# self-heals an already-broken install on the next browser restart.
+mkdir -p "$NX_DIR/bin"
+cat > "$NX_DIR/bin/fit-window.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+# Force the Chrome/Chromium window to fill the Xvfb display (no WM present).
+command -v xdotool >/dev/null 2>&1 || exit 0
+for i in $(seq 1 30); do
+  WID="$(xdotool search --onlyvisible --class chrome 2>/dev/null | head -1)"
+  [ -z "$WID" ] && WID="$(xdotool search --onlyvisible --class Chromium 2>/dev/null | head -1)"
+  [ -n "$WID" ] && break
+  sleep 1
+done
+[ -n "$WID" ] || exit 0
+xdotool windowsize "$WID" 100% 100% >/dev/null 2>&1 || true
+xdotool windowmove "$WID" 0 0 >/dev/null 2>&1 || true
+SCRIPT
+chmod 0755 "$NX_DIR/bin/fit-window.sh"
+chown "$NX_USER":"$NX_USER" "$NX_DIR/bin" "$NX_DIR/bin/fit-window.sh" 2>/dev/null || true
 cat > /etc/systemd/system/nexdesk-display.service <<UNIT
 [Unit]
 Description=NexDesk virtual display (Xvfb)
@@ -630,6 +653,7 @@ Environment=DISPLAY=:${DISPLAY_NUM}
 Environment=PULSE_SERVER=unix:/run/nexdesk-audio/pulse/native
 Environment=PULSE_RUNTIME_PATH=/run/nexdesk-audio/pulse
 ExecStart=${BROWSER_BIN} --user-data-dir=${NX_DIR}/.chrome --window-size=${BROWSER_RES} --window-position=0,0 ${BROWSER_OPTS} about:blank
+ExecStartPost=${NX_DIR}/bin/fit-window.sh
 Restart=always
 RestartSec=3
 [Install]
