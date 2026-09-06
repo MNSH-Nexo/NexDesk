@@ -504,10 +504,29 @@ fi
 
 # ---------------------------------------------------------------------------
 # 5. Gateway npm deps
+#    npm 10 changed how "--production" is handled and on some versions it can
+#    exit successfully WITHOUT installing anything, leaving the gateway
+#    crash-looping on "Cannot find module 'express'". We therefore install all
+#    declared dependencies plainly, then VERIFY the two modules the gateway
+#    requires are really on disk before trusting this step.
 # ---------------------------------------------------------------------------
 info "Installing gateway dependencies (express + ws)..."
-(cd "$NX_DIR/src/core/gateway" && npm install --no-audit --no-fund --production >/dev/null)
-ok "Gateway dependencies installed."
+NX_GATEWAY_DIR="$NX_DIR/src/core/gateway"
+[[ -f "$NX_GATEWAY_DIR/package.json" ]] || die "Gateway package.json missing under $NX_GATEWAY_DIR — cannot install dependencies."
+_nx_deps_ok=0
+for _nx_attempt in 1 2; do
+  if (cd "$NX_GATEWAY_DIR" && npm install --no-audit --no-fund --include=dev >>"${LOG_FILE:-/dev/null}" 2>&1) \
+     && [[ -d "$NX_GATEWAY_DIR/node_modules/express" && -d "$NX_GATEWAY_DIR/node_modules/ws" ]]; then
+    _nx_deps_ok=1
+    break
+  fi
+  warn "npm install did not succeed (attempt $_nx_attempt/2) — retrying..."
+  sleep 3
+done
+if [[ "$_nx_deps_ok" != "1" ]]; then
+  die "Gateway dependencies failed to install (express/ws are missing under $NX_GATEWAY_DIR/node_modules). Check the install log and your network access to https://registry.npmjs.org, then run: cd $NX_GATEWAY_DIR && npm install && systemctl restart nexdesk-gateway"
+fi
+ok "Gateway dependencies installed (express + ws)."
 
 # ---------------------------------------------------------------------------
 # 5b. TLS certificate (self-signed) for the optional HTTPS listener
@@ -687,27 +706,58 @@ echo -e "    ${C_CYN}http://127.0.0.1:${NX_PORT}${C_RESET}  ->  $([[ "$HTTP_OK" 
 [[ "$ENABLE_HTTPS" == "1" ]] && echo -e "    ${C_CYN}https://127.0.0.1:${NX_HTTPS_PORT}${C_RESET} ->  $([[ "$HTTPS_OK" == "1" ]] && echo -e "${C_GRN}listening${C_RESET}" || echo -e "${C_RED}NOT listening${C_RESET}")"
 
 PUBIP="$(curl -4 -fsSL --max-time 5 https://api.ipify.org 2>/dev/null || echo '<your-server-ip>')"
-clear 2>/dev/null || true
-echo
-echo "==============================================================================="
-echo -e "  ${C_BOLD}NexDesk is ready 🎉  Your personal virtual browser${C_RESET}"
-echo "==============================================================================="
-echo
-echo -e "  ${C_BOLD}Personal links:${C_RESET}"
-echo -e "  ${C_GRN}  http://${PUBIP}:${NX_PORT}/${WEBPATH}${C_RESET}"
-if [[ "$ENABLE_HTTPS" == "1" ]]; then
-  echo -e "  ${C_GRN}  https://${PUBIP}:${NX_HTTPS_PORT}/${WEBPATH}${C_RESET}"
+
+# The health report above can look complete while something is actually down:
+# if any core service is inactive or a gateway port never opened, the install
+# did NOT succeed — say so loudly instead of printing "ready" links the
+# visitor cannot use.
+_NXD_FAILED=0
+if [[ "$HTTP_OK" != "1" ]]; then _NXD_FAILED=1; fi
+if [[ "$ENABLE_HTTPS" == "1" && "$HTTPS_OK" != "1" ]]; then _NXD_FAILED=1; fi
+for _nxd_svc in nexdesk-display nexdesk-vnc nexdesk-browser nexdesk-gateway; do
+  systemctl is-active --quiet "$_nxd_svc" 2>/dev/null || _NXD_FAILED=1
+done
+
+if [[ "$_NXD_FAILED" == "1" ]]; then
   echo
-  echo -e "  ${C_YEL}  Note: HTTPS uses a self-signed certificate, so your browser${C_RESET}"
-  echo -e "  ${C_YEL}  will ask you to accept it once. That is normal and safe.${C_RESET}"
+  echo -e "${C_RED}===============================================================================${C_RESET}"
+  echo -e "  ${C_BOLD}${C_RED}NexDesk did NOT finish starting.${C_RESET}"
+  echo -e "  ${C_RED}One or more services above are inactive or not listening.${C_RESET}"
+  echo -e "  ${C_RED}They must be running before your virtual browser can be used.${C_RESET}"
+  echo -e "${C_RED}===============================================================================${C_RESET}"
+  echo
+  echo -e "  ${C_YEL}Your links (not reachable until the services are fixed):${C_RESET}"
+  echo -e "    http://${PUBIP}:${NX_PORT}/${WEBPATH}"
+  [[ "$ENABLE_HTTPS" == "1" ]] && echo -e "    https://${PUBIP}:${NX_HTTPS_PORT}/${WEBPATH}"
+  echo
+  echo -e "  ${C_YEL}Why is it failing? Look at the gateway log:${C_RESET}"
+  echo -e "    journalctl -u nexdesk-gateway -n 50"
+  echo -e "    cat ${LOG_FILE:-$NX_DIR/logs}"
+  echo
+  die "Install did not complete. Fix the failing service(s) above, then simply re-run the same install command (it keeps your link and password)."
+else
+  clear 2>/dev/null || true
+  echo
+  echo "==============================================================================="
+  echo -e "  ${C_BOLD}NexDesk is ready 🎉  Your personal virtual browser${C_RESET}"
+  echo "==============================================================================="
+  echo
+  echo -e "  ${C_BOLD}Personal links:${C_RESET}"
+  echo -e "  ${C_GRN}  http://${PUBIP}:${NX_PORT}/${WEBPATH}${C_RESET}"
+  if [[ "$ENABLE_HTTPS" == "1" ]]; then
+    echo -e "  ${C_GRN}  https://${PUBIP}:${NX_HTTPS_PORT}/${WEBPATH}${C_RESET}"
+    echo
+    echo -e "  ${C_YEL}  Note: HTTPS uses a self-signed certificate, so your browser${C_RESET}"
+    echo -e "  ${C_YEL}  will ask you to accept it once. That is normal and safe.${C_RESET}"
+  fi
+  echo
+  echo -e "  ${C_BOLD}Password:${C_RESET}   ${C_CYN}${PASSWORD}${C_RESET}"
+  echo
+  echo "  Keep these links + password secret. They are your only key to this session."
+  echo "  Root / unknown URLs return 404 so the service stays hidden."
+  echo
+  echo "  Manage:  systemctl status nexdesk-{gateway,browser,audio,vnc,display}"
+  echo "  Admin menu:  sudo nexdesk      (change password/web path, info, uninstall)"
+  echo "==============================================================================="
+  [[ -n "$LOG_FILE" ]] && echo "  Full install log: $LOG_FILE"
 fi
-echo
-echo -e "  ${C_BOLD}Password:${C_RESET}   ${C_CYN}${PASSWORD}${C_RESET}"
-echo
-echo "  Keep these links + password secret. They are your only key to this session."
-echo "  Root / unknown URLs return 404 so the service stays hidden."
-echo
-echo "  Manage:  systemctl status nexdesk-{gateway,browser,audio,vnc,display}"
-echo "  Admin menu:  sudo nexdesk      (change password/web path, info, uninstall)"
-echo "==============================================================================="
-[[ -n "$LOG_FILE" ]] && echo "  Full install log: $LOG_FILE"
