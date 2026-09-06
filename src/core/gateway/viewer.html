@@ -186,6 +186,47 @@
     #vkb .vkb-row{margin-bottom:3px}
     #vkb .vkb-top{margin-bottom:4px}
   }
+  /* ---------- landscape phones: slim floating top bar + translucent keyboard ----------
+     The virtual screen keeps its full size underneath the keyboard, which becomes
+     a translucent floating bar (blurred, ~40% tint) so the page stays visible
+     through the keys and the field being typed into can be positioned above. */
+  @media (orientation:landscape) and (max-height:560px){
+    #topbar{position:absolute;top:0;left:0;right:0;height:40px;padding:0 6px;gap:6px;
+            overflow-x:auto;overflow-y:hidden;flex-wrap:nowrap;justify-content:flex-start;
+            scrollbar-width:none;-webkit-overflow-scrolling:touch;z-index:22}
+    #topbar::-webkit-scrollbar{display:none}
+    #topbar .brand .mark{width:24px;height:24px;border-radius:7px;font-size:12px}
+    #topbar .brand .name{display:none}
+    #topbar .btn{height:28px;padding:0 8px;font-size:11.5px}
+    #topbar .btn .ic{width:13px;height:13px}
+    #topbar .chip{height:26px;padding:0 8px;gap:5px}
+    #topbar .qctl{height:26px;padding:0 6px 0 4px}
+    #topbar .qctl #qualitySel{font-size:12px;padding:0 12px 0 2px}
+    #status{max-width:22vw;font-size:11px}
+    .meter{display:none}
+    #qinfo{display:none}              /* quality read-out is duplicated elsewhere */
+    #hint{display:none!important}
+    .m-hint{top:calc(var(--sat) + 8px)}
+    html,body{overscroll-behavior:none;touch-action:manipulation}
+    #vkb{background:rgba(9,9,20,.40);border-top:1px solid rgba(255,255,255,.14);
+         backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+         padding:6px 4px calc(6px + var(--sab))}
+    #vkb .vkb-top{margin:0 2px 4px}
+    #vkb .vkb-lang{height:24px;padding:0 8px;font-size:11px}
+    #vkb .vkb-hide{height:24px;width:24px;font-size:13px}
+    #vkb .vkb-lbl{font-size:10px}
+    #vkb .vkb-row{gap:4px;margin-bottom:4px}
+    #vkb .vk{height:30px;font-size:13px;border-radius:7px;border-color:rgba(255,255,255,.07);
+             background:rgba(255,255,255,.05)}
+    #vkb .vk.fn{font-size:11px}
+    #vkb .vk.zwnj{font-size:9px}
+    body.vkb-open #app{padding-bottom:0!important}   /* screen keeps full size */
+    body.vkb-open .zoom-pill{bottom:calc(var(--vkb-h,0px) + var(--sab) + 12px)}
+    body.vkb-open #toast{bottom:calc(var(--vkb-h,0px) + 16px)}
+    body.vkb-open .kbd-fab{display:none}
+    .zoom-pill{right:10px;bottom:calc(var(--sab) + 10px);height:30px;padding:0 10px;font-size:11px}
+    .kbd-fab{right:10px;bottom:calc(var(--sab) + 48px);height:30px;padding:0 10px;font-size:11px}
+  }
   @media (pointer:coarse){
     #topbar{margin-bottom:env(safe-area-inset-bottom)}
   }
@@ -510,7 +551,9 @@
   let fitMode = true;
   // Touch detection guards every mobile-only behaviour (auto-hide bar, zoom,
   // keyboard-aware screen height). Desktop paths never read it.
-  const IS_TOUCH = window.matchMedia('(hover: none), (max-width: 640px)').matches;
+  const IS_TOUCH = window.matchMedia('(hover: none), (max-width: 640px)').matches
+    || navigator.maxTouchPoints > 0
+    || ('ontouchstart' in window);
 
   // ----- automatic reconnect on dropped links (self-healing) -----
   // connectToken invalidates the event handlers of any RFB instance we replace,
@@ -946,7 +989,7 @@
   // RFB already observes its container internally; on window resize we
   // nudge it so Fit (scaleViewport) follows the new container size.
   window.addEventListener('resize', () => { if(rfb){ rfb.scaleViewport = fitMode; } if(IS_TOUCH) vkSyncHeight(); });
-  window.addEventListener('orientationchange', () => setTimeout(()=> { if(rfb){ rfb.scaleViewport = fitMode; } if(IS_TOUCH) vkSyncHeight(); }, 300));
+  window.addEventListener('orientationchange', () => setTimeout(()=> { if(rfb){ rfb.scaleViewport = fitMode; } if(IS_TOUCH){ vkSyncHeight(); vkMaybeAutoOpen(); } }, 300));
 
   // ----- resource meter (host CPU / RAM) -----
   const cpuFill = $('cpuFill'), cpuVal = $('cpuVal');

@@ -41,6 +41,9 @@ machine and **survives restarts**, so it works like a real desktop you can reach
   with a floating hint); the screen is **fit to width** by default, **double-tap or a floating
   pill toggles actual size (1:1) with drag-to-pan**, the on-screen keyboard shrinks the remote
   screen so the field you type in stays visible, and overscroll/rubber-banding is disabled.
+  In **landscape** the top bar becomes a slim floating strip and the keyboard turns into a
+  **translucent floating bar** that overlays the virtual screen — the page stays visible
+  through the keys, so the field you type into can be kept in sight.
 - **Live resource meter** — the top bar shows real **CPU %** and **RAM used/total** with a
   colour gauge (green → yellow → red), reading NexDesk's own processes plus host totals.
 - **Adaptive connection quality** — a top-bar control (**Auto / High / Balanced / Low**) lets you
