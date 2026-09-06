@@ -233,7 +233,19 @@ NX_HTTPS="${NX_HTTPS:-on}"            # 'on' (default) or 'off'
 NX_HTTPS_PORT="${NX_HTTPS_PORT:-8443}"
 DISPLAY_NUM=99
 VNC_PORT=5900
-BROWSER_RES="1440x880"
+BROWSER_RES="${BROWSER_RES:-auto}"       # 'auto' -> tuned to this server's RAM/CPU
+DISPLAY_RES="$BROWSER_RES"
+# Auto-pick the best default screen size for the hardware (fresh installs).
+if [ "$DISPLAY_RES" = "auto" ]; then
+  _cores=$(nproc 2>/dev/null | tr -d '[:space:]' || echo 1)
+  _rammib=$(awk '/^MemTotal:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 2048)
+  if   [ "$_rammib" -ge 8000 ] && [ "$_cores" -ge 6 ]; then DISPLAY_RES="1920x1080"
+  elif [ "$_rammib" -ge 4096 ] && [ "$_cores" -ge 2 ]; then DISPLAY_RES="1600x900"
+  elif [ "$_rammib" -ge 2048 ];                        then DISPLAY_RES="1440x900"
+  else DISPLAY_RES="1280x720"; fi
+  BROWSER_RES="$DISPLAY_RES"
+  info "Detected hardware: ${_rammib} MiB RAM · ${_cores} core(s) — default screen ${DISPLAY_RES}."
+fi
 ENABLE_HTTPS=1
 [[ "$NX_HTTPS" == "off" ]] && ENABLE_HTTPS=0
 
@@ -519,7 +531,7 @@ Description=NexDesk virtual display (Xvfb)
 After=systemd-user-sessions.service
 [Service]
 Type=simple
-ExecStart=/usr/bin/Xvfb :${DISPLAY_NUM} -screen 0 1440x900x24 -nolisten tcp
+ExecStart=/usr/bin/Xvfb :${DISPLAY_NUM} -screen 0 ${DISPLAY_RES}x24 -nolisten tcp
 Restart=always
 RestartSec=2
 [Install]

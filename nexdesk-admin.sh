@@ -348,12 +348,51 @@ do_update() {
 # ---------------------------------------------------------------------------
 MEMDROP="/etc/systemd/system/nexdesk-browser.service.d/memory.conf"
 
+# --- Hardware auto-detection (per-server tuning) ---------------------------
+# Reads the real total RAM and CPU core count so every server is tuned to its
+# own hardware instead of fixed values.
+sys_ram_mib() { awk '/^MemTotal:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 2048; }
+sys_cpu_cores() { nproc 2>/dev/null | tr -d '[:space:]' || echo 1; }
+
+# Recommended hard RAM ceiling: leave the OS + NexDesk services a safe
+# headroom, then give the rest to the browser. Extra-safe leaves ~half free.
+ram_recommended() {
+  local t
+  t="$(sys_ram_mib)"
+  # reserve = max(35% , 512 MiB); ceiling = total - reserve; never below 512
+  awk -v t="$t" 'BEGIN{r=t*0.35; if(r<512)r=512; c=t-r; if(c<512)c=512; printf "%d", c}'
+}
+ram_extrasafe() {
+  local t
+  t="$(sys_ram_mib)"
+  awk -v t="$t" 'BEGIN{r=t*0.50; if(r<512)r=512; c=t-r; if(c<512)c=512; printf "%d", c}'
+}
+
+# Best virtual-screen size for this hardware (higher-res looks sharper but a
+# weak CPU/RAM server stays smoother on a smaller desktop).
+res_recommended() {
+  local cores ram
+  cores="$(sys_cpu_cores)"; ram="$(sys_ram_mib)"
+  if   [ "$ram" -ge 8000 ] && [ "$cores" -ge 6 ]; then echo "1920x1080";
+  elif [ "$ram" -ge 4096 ] && [ "$cores" -ge 2 ]; then echo "1600x900";
+  elif [ "$ram" -ge 2048 ] && [ "$cores" -ge 1 ]; then echo "1440x900";
+  else echo "1280x720"; fi
+}
+
+sys_summary() {
+  local ram cores
+  ram="$(sys_ram_mib)"; cores="$(sys_cpu_cores)"
+  echo -e "  ${B}Detected server:${R} ${ram} MiB RAM · ${cores} CPU core(s)"
+  echo -e "  ${B}Recommended browser RAM ceiling:${R} $(ram_recommended) MiB"
+  echo -e "  ${B}Recommended screen size:${R} $(res_recommended)"
+}
+
 budget_text() {
   if [ -f "$MEMDROP" ]; then
     local h m
     h="$(sed -n 's/^MemoryHigh=//p' "$MEMDROP")"
     m="$(sed -n 's/^MemoryMax=//p' "$MEMDROP")"
-    echo "${h} soft / ${m} hard"
+    echo "soft ${h} / hard ceiling ${m}"
   else
     echo "none (browser may use as much as free RAM allows)"
   fi
@@ -418,37 +457,43 @@ mem_saver() {
 
 budget_set() {
   echo
+  local total rec safe
+  total="$(sys_ram_mib)"; rec="$(ram_recommended)"; safe="$(ram_extrasafe)"
   echo -e "  ${B}Set a RAM ceiling for the whole NexDesk browser${R}"
   echo -e "  Current ceiling: $(budget_text)"
   echo
-  echo -e "  When the browser reaches the ceiling, the OS reclaims inactive-tab"
-  echo -e "  memory (and can drop heavy background tabs) instead of letting a"
-  echo -e "  few tabs lock up the whole server."
+  sys_summary
   echo
-  echo -e "  ${CY}1${R}  1024 MiB (1 GiB)    — a few lighter tabs"
-  echo -e "  ${CY}2${R}  1536 MiB (1.5 GiB)  — roomier, a good default"
-  echo -e "  ${CY}3${R}  2048 MiB (2 GiB)    — matches most of your RAM"
-  echo -e "  ${CY}4${R}  Custom value (MiB)"
-  echo -e "  ${D}0${R}  no ceiling"
+  echo -e "  NexDesk reads how much RAM THIS server has, keeps a safe reserve"
+  echo -e "  for the operating system, and caps the browser below that so RAM"
+  echo -e "  can never fill up and lock the server."
+  echo
+  echo -e "  ${CY}1${R}  Recommended for this server   → hard ceiling ${B}${rec} MiB${R}"
+  echo -e "  ${CY}2${R}  Extra safe (keep ~half free)  → hard ceiling ${B}${safe} MiB${R}"
+  echo -e "  ${CY}3${R}  Custom value (MiB)"
+  echo -e "  ${CY}4${R}  Remove the RAM ceiling"
+  echo -e "  ${D}0${R}  Cancel"
   read -r -p "  Choose [1-4/0]: " m
   local v=""
   case "$m" in
-    1) v=1024;; 2) v=1536;; 3) v=2048;;
-    4) read -r -p "  Ceiling in MiB (>= 512): " v;;
-    0) budget_clear; return;;
+    1) v="$rec";;
+    2) v="$safe";;
+    3) read -r -p "  Ceiling in MiB (>= 512): " v;;
+    4) budget_clear; return;;
+    0|'') info "Cancelled."; return;;
     *) fail "Invalid choice."; return;;
   esac
   if [[ ! "$v" =~ ^[0-9]+$ ]] || [ "$v" -lt 512 ]; then fail "Enter a number of MiB >= 512."; return; fi
-  read -r -p "  Apply a ${v} MiB ceiling now (restarts the browser)? [y/N]: " go
+  local soft=$(( v * 88 / 100 ))
+  read -r -p "  Apply a hard ceiling of ${v} MiB now (restarts the browser)? [y/N]: " go
   [[ "$go" == "y" || "$go" == "Y" ]] || { info "Cancelled."; return; }
-  local high=$((v * 90 / 100)) max=$((v * 110 / 100))
   mkdir -p /etc/systemd/system/nexdesk-browser.service.d
-  printf '[Service]\nMemoryHigh=%dM\nMemoryMax=%dM\n' "$high" "$max" > "$MEMDROP"
+  printf '[Service]\nMemoryHigh=%dM\nMemoryMax=%dM\n' "$soft" "$v" > "$MEMDROP"
   systemctl daemon-reload
   systemctl restart nexdesk-browser
   sleep 1
   if systemctl is-active --quiet nexdesk-browser; then
-    ok "Ceiling applied: soft ${high}M / hard ${max}M."
+    ok "Ceiling applied: soft ${soft}M / hard ceiling ${v}M."
   else
     fail "Browser did not restart after applying the ceiling."
   fi
@@ -539,17 +584,114 @@ zram_menu() {
   esac
 }
 
+res_current() {
+  local ov=/etc/systemd/system/nexdesk-display.service.d/screen.conf
+  local src
+  if [ -f "$ov" ]; then src="$ov"; else src=/etc/systemd/system/nexdesk-display.service; fi
+  sed -nE 's#.*-screen 0 ([0-9]+x[0-9]+)x[0-9]+.*#\1#p' "$src" | head -1
+}
+
+# Restart display+vnc+browser together (they are coupled) and report state.
+_res_start() {
+  systemctl restart nexdesk-display
+  systemctl restart nexdesk-vnc
+  systemctl restart nexdesk-browser
+  sleep 2
+  local n=0
+  for svc in nexdesk-display nexdesk-vnc nexdesk-browser nexdesk-gateway; do
+    systemctl is-active --quiet "$svc" && n=$((n+1))
+  done
+  [ "$n" -eq 4 ] && ok "All services running at ${1}." || warn "Some services did not restart cleanly."
+}
+
+res_apply() { # $1 = WxH
+  local W="${1%x*}" H="${1#*x}"
+  local dunit=/etc/systemd/system/nexdesk-display.service
+  local bunit=/etc/systemd/system/nexdesk-browser.service
+  local dexec bexec nd nb
+  dexec="$(sed -n 's/^ExecStart=//p' "$dunit" | head -1)"
+  bexec="$(sed -n 's/^ExecStart=//p' "$bunit" | head -1)"
+  if [ -z "$dexec" ] || [ -z "$bexec" ]; then fail "Could not read the service units."; return; fi
+  nd="$(printf '%s\n' "$dexec" | sed -E "s/-screen 0 [0-9]+x[0-9]+x[0-9]+/-screen 0 ${W}x${H}x24/")"
+  nb="$(printf '%s\n' "$bexec" | sed -E "s/--window-size=[0-9]+x[0-9]+/--window-size=${W}x${H}/")"
+  if ! printf '%s\n' "$nd" | grep -q -- "-screen 0 ${W}x${H}"; then
+    fail "Could not prepare the new screen size."; return
+  fi
+  local ddir=/etc/systemd/system/nexdesk-display.service.d
+  local bdir=/etc/systemd/system/nexdesk-browser.service.d
+  mkdir -p "$ddir" "$bdir"
+  printf '[Service]\nExecStart=\nExecStart=%s\n' "$nd" > "$ddir/screen.conf"
+  printf '[Service]\nExecStart=\nExecStart=%s\n' "$nb" > "$bdir/screen.conf"
+  systemctl daemon-reload
+  echo
+  info "Applying ${W}x${H} and restarting the display services..."
+  _res_start "${W}x${H}"
+}
+
+res_reset() {
+  rm -f /etc/systemd/system/nexdesk-display.service.d/screen.conf
+  rmdir /etc/systemd/system/nexdesk-display.service.d 2>/dev/null || true
+  rm -f /etc/systemd/system/nexdesk-browser.service.d/screen.conf
+  systemctl daemon-reload
+  echo
+  info "Restoring the original factory screen size..."
+  _res_start "$(res_current || echo original)"
+}
+
+quality_menu() {
+  local cur rec cores ram
+  cur="$(res_current || echo unknown)"
+  rec="$(res_recommended)"
+  cores="$(sys_cpu_cores)"; ram="$(sys_ram_mib)"
+  echo
+  echo -e "  ${B}${CY}Graphics quality — screen size${R}"
+  line
+  echo -e "  Detected: ${ram} MiB RAM · ${cores} CPU core(s)"
+  echo -e "  Current screen: ${B}${cur:-unknown}${R}   Recommended: ${B}${rec}${R}"
+  echo
+  echo -e "  A smaller screen is smoother on low RAM/CPU servers; a larger one"
+  echo -e "  is sharper but heavier. Changing it restarts the desktop briefly."
+  echo
+  echo -e "  ${CY}1${R}  Apply recommended (${rec}) for this server"
+  echo -e "  ${CY}2${R}  1280x720   — lightest / smoothest"
+  echo -e "  ${CY}3${R}  1440x900   — balanced"
+  echo -e "  ${CY}4${R}  1600x900   — sharper (needs 2+ cores, 4GiB+)"
+  echo -e "  ${CY}5${R}  1920x1080  — largest (needs 6+ cores, 8GiB+)"
+  echo -e "  ${CY}6${R}  Restore the original factory size"
+  echo -e "  ${D}0${R}  Back"
+  read -r -p "  Choose: " c
+  case "$c" in
+    1) want="$rec";;
+    2) want="1280x720";;
+    3) want="1440x900";;
+    4) want="1600x900";;
+    5) want="1920x1080";;
+    6) echo; read -r -p "  Restore the factory screen size now? [y/N]: " g
+       [[ "$g" == y || "$g" == Y ]] && res_reset; return;;
+    0|'') info "Back."; return;;
+    *) fail "Invalid choice."; return;;
+  esac
+  if [ "${want:-}" = "$cur" ]; then info "Already ${cur} — nothing to change."; return; fi
+  echo
+  read -r -p "  Change the screen size to ${want} now? [y/N]: " g
+  [[ "$g" == y || "$g" == Y ]] || { info "Cancelled."; return; }
+  res_apply "$want"
+}
+
 mem_panel() {
   local c=""
   while true; do
     banner_top
     echo -e "  ${B}${CY}Memory & performance${R}"
     line
+    sys_summary
+    echo
     echo -e "  ${CY}1${R}  Live memory view + heaviest Chrome processes"
     echo -e "  ${CY}2${R}  Memory Saver — free RAM from inactive tabs"
     echo -e "  ${CY}3${R}  Set a RAM ceiling for the whole browser"
     echo -e "  ${CY}4${R}  Remove the browser RAM ceiling"
     echo -e "  ${CY}5${R}  zram — compressed swap to smooth memory spikes"
+    echo -e "  ${CY}6${R}  Graphics quality — screen size (tuned to this server)"
     echo -e "  ${D}0${R}  Back to main menu"
     echo
     read -r -p "  Choose: " c
@@ -559,6 +701,7 @@ mem_panel() {
       3) budget_set;;
       4) budget_clear;;
       5) zram_menu;;
+      6) quality_menu;;
       0) return;;
       *) echo -e "  ${RD}Invalid choice: $c${R}"; sleep 1; continue;;
     esac
