@@ -334,13 +334,31 @@ do_update() {
   [[ "$go" == "y" || "$go" == "Y" ]] || { info "Cancelled."; return; }
   echo
   info "Running the official updater (downloads the latest NexDesk)..."
-  if bash <(curl -fsSL --max-time 60 https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/main/install.sh) update; then
+  # Download the official installer first and check it really arrived. Piping a
+  # failed download straight into bash runs an empty script that "succeeds",
+  # which used to print "Update finished" even though nothing was updated.
+  local upd="/tmp/nexdesk-update.sh"
+  if ! curl -fsSL --max-time 60 -o "$upd" https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/master/install.sh; then
+    fail "Could not download the updater (network error) — please retry."
+    return
+  fi
+  if ! grep -q "one-command installer" "$upd"; then
+    rm -f "$upd"
+    fail "Downloaded updater looks invalid — please retry."
+    return
+  fi
+  echo
+  local rc=0
+  bash "$upd" update || rc=$?
+  rm -f "$upd"
+  if [[ "$rc" == "0" ]]; then
     echo
     ok "Update finished."
-    show_status
   else
-    fail "Update did not complete. See the log under $NX_DIR/logs/."
+    echo
+    fail "Update did not complete — see the messages above and the log under $NX_DIR/logs/."
   fi
+  show_status
 }
 
 # ---------------------------------------------------------------------------
