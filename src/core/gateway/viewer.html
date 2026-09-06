@@ -191,9 +191,12 @@
      a translucent floating bar (blurred, ~40% tint) so the page stays visible
      through the keys and the field being typed into can be positioned above. */
   @media (orientation:landscape) and (max-height:560px){
-    #topbar{position:absolute;top:0;left:0;right:0;height:40px;padding:0 6px;gap:6px;
+    /* The slim top bar stays in normal flow above the virtual screen — it never
+       overlays the browser — and because it is always visible, the touch
+       auto-hide (which slides a floating bar away) is disabled in landscape. */
+    #topbar{position:static;height:40px;padding:0 6px;gap:6px;
             overflow-x:auto;overflow-y:hidden;flex-wrap:nowrap;justify-content:flex-start;
-            scrollbar-width:none;-webkit-overflow-scrolling:touch;z-index:22}
+            scrollbar-width:none;-webkit-overflow-scrolling:touch}
     #topbar::-webkit-scrollbar{display:none}
     #topbar .brand .mark{width:24px;height:24px;border-radius:7px;font-size:12px}
     #topbar .brand .name{display:none}
@@ -795,6 +798,17 @@
 
   // ----- auto-hide controls: desktop (fullscreen only) + mobile (after 4s) -----
   let hideTimer = null;
+  // Landscape keeps the slim top bar in normal flow above the virtual screen,
+  // so it never overlays the browser and the touch auto-hide is disabled there.
+  const mqLand = window.matchMedia('(orientation:landscape) and (max-height:560px)');
+  function applyLand(){
+    document.body.classList.toggle('landscape', mqLand.matches);
+    if(mqLand.matches){
+      const b = $('topbar');
+      if(b){ b.style.transform = ''; b.style.opacity = ''; b.style.pointerEvents = ''; }
+    }
+  }
+  applyLand();
   function mHintShow(){
     const h = $('mHint'); if(!h) return;
     h.classList.add('show');
@@ -807,7 +821,7 @@
       $('topbar').style.transform = 'translateY(-110%)';
       $('topbar').style.opacity = '0';
       $('hint').style.display = 'block';
-    } else if(IS_TOUCH && connected){
+    } else if(IS_TOUCH && connected && !document.body.classList.contains('landscape')){
       $('topbar').style.transform = 'translateY(-110%)';
       $('topbar').style.opacity = '0';
       $('topbar').style.pointerEvents = 'none';
@@ -988,8 +1002,8 @@
 
   // RFB already observes its container internally; on window resize we
   // nudge it so Fit (scaleViewport) follows the new container size.
-  window.addEventListener('resize', () => { if(rfb){ rfb.scaleViewport = fitMode; } if(IS_TOUCH) vkSyncHeight(); });
-  window.addEventListener('orientationchange', () => setTimeout(()=> { if(rfb){ rfb.scaleViewport = fitMode; } if(IS_TOUCH){ vkSyncHeight(); vkMaybeAutoOpen(); } }, 300));
+  window.addEventListener('resize', () => { if(rfb){ rfb.scaleViewport = fitMode; } if(IS_TOUCH) vkSyncHeight(); applyLand(); });
+  window.addEventListener('orientationchange', () => setTimeout(()=> { if(rfb){ rfb.scaleViewport = fitMode; } if(IS_TOUCH){ vkSyncHeight(); vkMaybeAutoOpen(); } applyLand(); }, 300));
 
   // ----- resource meter (host CPU / RAM) -----
   const cpuFill = $('cpuFill'), cpuVal = $('cpuVal');
