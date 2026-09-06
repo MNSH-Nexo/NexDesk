@@ -11,7 +11,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { WebSocketServer, WebSocket } = require('ws');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const PORT = process.env.PORT || 8087;
 const VNC_HOST = process.env.VNC_HOST || '127.0.0.1';
@@ -30,6 +30,36 @@ const TLS_ENABLED = HTTPS_PORT > 0 && fs.existsSync(TLS_KEY) && fs.existsSync(TL
 if (HTTPS_PORT > 0 && !TLS_ENABLED) {
   console.warn('[NexDesk] HTTPS requested but TLS key/cert missing (' + TLS_KEY + ') — serving HTTP only.');
 }
+
+// Build version of the currently running code. Every deploy is commit + push +
+// service restart, so the git short hash uniquely identifies a release. The
+// viewer polls this and refreshes itself automatically whenever a newer build
+// goes live, so visitors never need to clear their browser cache.
+const APP_VERSION = (() => {
+  // systemd services often run with a minimal PATH, so give the child a known
+  // PATH or git itself would not be found. The service also runs as a user that
+  // does not own the checkout, so add a scoped safe.directory exception (this
+  // affects only this one read-only git child, never the repository or config).
+  const gitEnv = Object.assign({}, process.env, {
+    PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'safe.directory',
+    GIT_CONFIG_VALUE_0: '*',
+  });
+  try {
+    const repo = path.dirname(VIEWER_FILE);            // inside the git checkout
+    const r = spawnSync('git', ['-C', repo, 'rev-parse', '--short', 'HEAD'], { encoding: 'utf8', timeout: 3000, env: gitEnv });
+    if (r && !r.status && r.stdout && r.stdout.trim()) return r.stdout.trim();
+  } catch (e) {}
+  try { return String(fs.statSync(VIEWER_FILE).mtimeMs); } catch (e) {}
+  return 'dev';
+})();
+
+// Cache policy: HTML documents and JSON APIs must never be cached so a visitor
+// always receives the newest build. noVNC static assets are revalidated on each
+// request (cheap 304 when unchanged) which is enough to keep them fresh too.
+function noStore(res) { res.setHeader('Cache-Control', 'no-store'); }
+function noCache(res) { res.setHeader('Cache-Control', 'no-cache, must-revalidate'); }
 
 function readFirstLine(p) { try { return fs.readFileSync(p, 'utf8').split('\n')[0].trim(); } catch (e) { return ''; } }
 const SECRET = readFirstLine(SECRET_FILE) || crypto.randomBytes(16).toString('hex');
@@ -84,10 +114,14 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json({ limit: '2mb' }));
 const router = express.Router();
 
+// Tag every BASE response with the running build (visible in dev tools).
+router.use((req, res, next) => { res.setHeader('X-NexDesk-Version', APP_VERSION); next(); });
+
 // ---- Login (under BASE) ----
 router.get('/login', (req, res) => {
   if (authed(req)) return res.redirect(BASE + '/');
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  noStore(res);
   res.send(`<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>NexDesk</title>
 <style>
@@ -127,6 +161,8 @@ router.get('/', (req, res) => {
   fs.stat(VIEWER_FILE, (e, st) => {
     if (e || !st.isFile()){ L.error('viewer file missing', VIEWER_FILE); return res.status(500).send('Viewer not installed.'); }
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    noStore(res);
+    res.setHeader('X-NexDesk-Version', APP_VERSION);
     L.debug('serving viewer to', req.socket.remoteAddress);
     fs.createReadStream(VIEWER_FILE).pipe(res);
   });
@@ -164,6 +200,7 @@ function setXClipboard(text, cb){
 }
 router.post('/clipboard', (req, res) => {
   if (!authed(req)) return res.status(401).end();
+  noStore(res);
   const text = (req.body && typeof req.body.text === 'string') ? req.body.text : '';
   if (!text) return res.status(400).json({ ok: false, error: 'empty' });
   L.info('clipboard set bytes=' + Buffer.byteLength(text, 'utf8') + ' from ' + req.socket.remoteAddress);
@@ -173,6 +210,9 @@ router.post('/clipboard', (req, res) => {
   });
 });
 
+
+// JSON APIs are never cached, so live metrics and the version poll are always fresh.
+router.use('/api', (req, res, next) => { noStore(res); next(); });
 
 // ---- Resource stats (RAM/CPU) for the NexDesk top bar ----
 const STAT_WINDOW_MS = 450;
@@ -271,6 +311,12 @@ router.get('/api/link', (req, res) => {
   res.json({ ok:true, txRateKbps: Math.round(linkState.txRateKbps), rttMs: Math.round(linkState.rttMs) });
 });
 
+// ---- Running build version (drives the viewer's auto-update) ----
+router.get('/api/version', (req, res) => {
+  if(!authed(req)) return res.status(401).json({ ok:false, error:'unauthorized' });
+  res.json({ ok:true, version: APP_VERSION });
+});
+
 // ---- noVNC static assets (under BASE) ----
 router.use('/novnc', (req, res, next) => {
   if (!authed(req)) return res.redirect(BASE + '/login');
@@ -279,6 +325,7 @@ router.use('/novnc', (req, res, next) => {
   if (!file.startsWith(NOVNC_DIR)) return res.status(403).end();
   fs.stat(file, (e, st) => {
     if (e || st.isDirectory()){ L.debug('novnc 404', rel, '->', file); return res.status(404).end(); }
+    noCache(res);                       // revalidate each request (304 when unchanged)
     res.sendFile(file);
   });
 });
