@@ -54,6 +54,18 @@
   @keyframes pulse{50%{opacity:.3}}
   #status{font-size:12px;font-weight:600;color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:24vw}
   .hint{font-size:11px;color:var(--ink-dim);opacity:.75;display:none;white-space:nowrap}
+  /* ---------- mobile floating hint + zoom pill ---------- */
+  .m-hint{position:fixed;top:calc(var(--sat) + 10px);left:50%;transform:translateX(-50%);z-index:24;
+          background:rgba(15,15,26,.92);border:1px solid var(--chrome-border);color:var(--ink-dim);
+          font-size:11px;font-weight:600;padding:6px 12px;border-radius:999px;pointer-events:none;
+          opacity:0;transition:opacity .25s ease;white-space:nowrap;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+  .m-hint.show{opacity:1}
+  .zoom-pill{display:none;position:fixed;right:12px;bottom:calc(var(--sab) + 12px);z-index:24;height:34px;
+             padding:0 14px;border-radius:999px;border:1px solid var(--chrome-border);
+             background:rgba(15,15,26,.9);color:var(--ink);font-size:12px;font-weight:700;
+             backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+             box-shadow:0 8px 26px rgba(0,0,0,.45);cursor:pointer}
+  .zoom-pill.zoom{color:#fff;border-color:rgba(124,92,255,.55);background:rgba(124,92,255,.22)}
   /* ---------- connection quality control ---------- */
   .qctl{position:relative;display:inline-flex;align-items:center;gap:6px;height:32px;flex:none;padding:0 8px 0 6px;
         background:rgba(255,255,255,.045);border:1px solid var(--chrome-border);border-radius:9px}
@@ -137,10 +149,32 @@
   .btn.primary{background:linear-gradient(135deg,var(--brand),var(--brand2));border:0;color:#fff}
   .btn.primary:hover{filter:brightness(1.08);background:linear-gradient(135deg,var(--brand),var(--brand2))}
   @media (max-width:640px){
-    #topbar{height:48px;padding:0 8px}
+    /* Top bar becomes a floating strip above the screen: it can scroll
+       horizontally when every control doesn't fit, and it slides fully off
+       (reclaiming its 48px) when auto-hidden. Desktop keeps its old layout. */
+    #topbar{position:absolute;top:0;left:0;right:0;height:48px;padding:0 8px;
+            overflow-x:auto;overflow-y:hidden;flex-wrap:nowrap;justify-content:flex-start;
+            scrollbar-width:none;-webkit-overflow-scrolling:touch;z-index:22}
+    #topbar::-webkit-scrollbar{display:none}
+    #topbar .brand{padding-left:0}
     #status{max-width:32vw}
     .hide-sm{display:none}
+    #qinfo{display:none}               /* quality read-out is duplicated elsewhere */
+    #hint{display:none!important}      /* desktop fullscreen hint stays on desktop */
     .btn{padding:0 10px;height:32px}
+    html,body{overscroll-behavior:none;touch-action:manipulation}
+    /* While the on-screen keyboard is open, the remote screen shrinks above it
+       so the field being typed into is never hidden behind the keys. */
+    body.vkb-open #app{padding-bottom:calc(var(--vkb-h,0px) + var(--sab))}
+    body.vkb-open .zoom-pill{bottom:calc(var(--vkb-h,0px) + var(--sab) + 12px)}
+    body.vkb-open #toast{bottom:calc(var(--vkb-h,0px) + 20px)}
+  }
+  @media (max-width:400px){ #topbar .brand .name{display:none} }
+  /* Compact keyboard in short/landscape phones so the remote screen stays usable. */
+  @media (max-height:520px){
+    #vkb .vk{height:32px;font-size:14px}
+    #vkb .vkb-row{margin-bottom:3px}
+    #vkb .vkb-top{margin-bottom:4px}
   }
   @media (pointer:coarse){
     #topbar{margin-bottom:env(safe-area-inset-bottom)}
@@ -289,6 +323,7 @@
   #vkb .vk.space{flex:4.5}
   #vkb .vk.fn{font-size:13px;font-weight:800;color:var(--ink-dim)}
   #vkb .vk.fn:active{color:#fff}
+  #vkb .vk.zwnj{flex:2.2;font-size:10.5px;letter-spacing:.2px}
   #vkb.shift-on .vk.fn.shift{background:var(--brand);color:#fff;border-color:transparent}
   @media (max-width:640px){
     #vkb .vk{height:42px;font-size:16px}
@@ -341,6 +376,8 @@
     <button class="btn" id="btnRefresh" title="Reconnect"><svg class="ic" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg></button>
     <a class="btn danger" id="btnLogout" href="logout" title="Log out">Log out</a>
   </div>
+  <div id="mHint" class="m-hint">Tap anywhere to show controls</div>
+  <button id="zoomPill" class="zoom-pill" type="button" style="display:none" title="Zoom">Fit</button>
 
   <div id="screenWrap">
     <div id="screen"></div>
@@ -460,6 +497,9 @@
 
   let rfb = null;
   let fitMode = true;
+  // Touch detection guards every mobile-only behaviour (auto-hide bar, zoom,
+  // keyboard-aware screen height). Desktop paths never read it.
+  const IS_TOUCH = window.matchMedia('(hover: none), (max-width: 640px)').matches;
 
   // ----- automatic reconnect on dropped links (self-healing) -----
   // connectToken invalidates the event handlers of any RFB instance we replace,
@@ -629,6 +669,11 @@
       return showError('Could not start viewer: ' + err.message);
     }
     rfb.scaleViewport = fitMode;
+    if(IS_TOUCH){
+      // Restore the mobile zoom state (1:1 + pan, or fit-width) on reconnect.
+      try{ rfb.clipViewport = mobZoomed; }catch(e){}
+      try{ rfb.dragViewport = mobZoomed; }catch(e){}
+    }
     rfb.addEventListener('clipboard', (e) => {
       if(tok !== connectToken) return;
       const t = e.detail && e.detail.text;
@@ -642,6 +687,7 @@
       if(tok !== connectToken) return;
       connected = true; retryCount = 0;
       setState('connected', 'Connected'); focusRemote(); setQualityMode(qualityMode);
+      if(IS_TOUCH){ if(zoomPill) zoomPill.style.display = 'flex'; scheduleHide(); }
     });
     rfb.addEventListener('disconnect', () => {
       if(tok !== connectToken) return;
@@ -693,22 +739,82 @@
     }
   }
 
-  // ----- auto-hide controls on desktop -----
+  // ----- auto-hide controls: desktop (fullscreen only) + mobile (after 4s) -----
   let hideTimer = null;
+  function mHintShow(){
+    const h = $('mHint'); if(!h) return;
+    h.classList.add('show');
+    clearTimeout(mHintShow._t);
+    mHintShow._t = setTimeout(() => h.classList.remove('show'), 2600);
+  }
   function scheduleHide(){ clearTimeout(hideTimer); hideTimer = setTimeout(()=>{
-    // only auto-hide when connected and not in fullscreen-pointer editing
-    if(document.fullscreenElement && !document.hidden){
+    if(document.hidden) return;
+    if(document.fullscreenElement){
       $('topbar').style.transform = 'translateY(-110%)';
       $('topbar').style.opacity = '0';
       $('hint').style.display = 'block';
+    } else if(IS_TOUCH && connected){
+      $('topbar').style.transform = 'translateY(-110%)';
+      $('topbar').style.opacity = '0';
+      $('topbar').style.pointerEvents = 'none';
+      mHintShow();
     }
-  }, 3500); }
+  }, IS_TOUCH ? 4000 : 3500); }
   function showControls(){ clearTimeout(hideTimer);
-    $('topbar').style.transform = 'none'; $('topbar').style.opacity = '1'; $('hint').style.display = 'none';
+    $('topbar').style.transform = 'none'; $('topbar').style.opacity = '1'; $('topbar').style.pointerEvents = 'auto';
+    $('hint').style.display = 'none';
+    const h = $('mHint'); if(h) h.classList.remove('show');
   }
-  document.addEventListener('pointermove', () => { showControls(); scheduleHide(); });
-  document.addEventListener('pointerdown', showControls);
+  if(IS_TOUCH){
+    // On touch: any tap brings the bar back (typing on the on-screen keyboard
+    // is the exception — key taps must not pop the bar while typing).
+    document.addEventListener('pointerdown', (ev)=>{
+      if(ev.target && ev.target.closest && ev.target.closest('#vkb')) return;
+      showControls(); scheduleHide();
+    });
+  } else {
+    document.addEventListener('pointermove', () => { showControls(); scheduleHide(); });
+    document.addEventListener('pointerdown', showControls);
+  }
   screen.addEventListener('pointermove', () => {}); // keep screen active
+
+  // ----- mobile screen: fit-width by default; double-tap or the floating pill
+  // toggles actual-size (1:1) with drag-to-pan. Uses noVNC's own clip/drag
+  // support (present on the installed 1.3 build). Pinching inside the canvas
+  // still zooms the page inside the virtual browser (noVNC sends Ctrl+wheel).
+  const zoomPill = $('zoomPill');
+  let mobZoomed = false;
+  function setMobZoom(z){
+    mobZoomed = z;
+    fitMode = !z;                      // keep fitMode in sync with resize handlers
+    if(zoomPill){
+      zoomPill.textContent = z ? '1:1' : 'Fit';
+      zoomPill.classList.toggle('zoom', z);
+    }
+    if(!rfb) return;
+    try{ rfb.scaleViewport = fitMode; }catch(e){}
+    try{ rfb.clipViewport = z; }catch(e){}
+    try{ rfb.dragViewport = z; }catch(e){}
+    if(!z){ try{ screen.scrollLeft = 0; screen.scrollTop = 0; }catch(e){} }
+  }
+  function toggleMobZoom(){
+    setMobZoom(!mobZoomed);
+    toast(mobZoomed
+      ? '<b>Actual size</b><span class="upd">Drag to move around · double-tap to fit</span>'
+      : '<b>Fit to screen</b><span class="upd">Double-tap to zoom in</span>', 2000);
+    setTimeout(focusRemote, 60);
+  }
+  if(zoomPill) zoomPill.addEventListener('click', (e)=>{ e.stopPropagation(); toggleMobZoom(); });
+  if(IS_TOUCH){
+    let lastTapT = 0, lastTapX = 0, lastTapY = 0;
+    screen.addEventListener('touchend', (e)=>{
+      if(!connected || e.changedTouches.length !== 1) return;
+      const t = e.changedTouches[0], now = Date.now();
+      if(now - lastTapT < 300 && Math.abs(t.clientX - lastTapX) < 40 && Math.abs(t.clientY - lastTapY) < 40){
+        lastTapT = 0; toggleMobZoom();
+      } else { lastTapT = now; lastTapX = t.clientX; lastTapY = t.clientY; }
+    }, { passive:true });
+  }
 
   // ----- wire up -----
   $('btnFull').addEventListener('click', () => { toggleFull(); setTimeout(focusRemote, 60); });
@@ -810,8 +916,8 @@
 
   // RFB already observes its container internally; on window resize we
   // nudge it so Fit (scaleViewport) follows the new container size.
-  window.addEventListener('resize', () => { if(rfb){ rfb.scaleViewport = fitMode; } });
-  window.addEventListener('orientationchange', () => setTimeout(()=> { if(rfb){ rfb.scaleViewport = fitMode; } }, 300));
+  window.addEventListener('resize', () => { if(rfb){ rfb.scaleViewport = fitMode; } if(IS_TOUCH) vkSyncHeight(); });
+  window.addEventListener('orientationchange', () => setTimeout(()=> { if(rfb){ rfb.scaleViewport = fitMode; } if(IS_TOUCH) vkSyncHeight(); }, 300));
 
   // ----- resource meter (host CPU / RAM) -----
   const cpuFill = $('cpuFill'), cpuVal = $('cpuVal');
@@ -1204,39 +1310,59 @@
   // ==========================================================================
   const btnKbd = $('btnKbd'), vkbPanel = $('vkb'), vkbRows = $('vkbRows'),
         vkbLangBtn = $('vkbLang'), vkbCloseBtn = $('vkbClose');
-  const IS_TOUCH = window.matchMedia('(hover: none), (max-width: 640px)').matches;
   let vkLang = 'en', vkShift = false, vkOpen = false, vkAutoDone = false, vkShiftBtn = null;
+  let vkBsTimer = null, vkBsInt = null;
   try{ if(localStorage.getItem('nexdesk_kbd_lang') === 'fa') vkLang = 'fa'; }catch(e){}
   vkbLangBtn.textContent = vkLang.toUpperCase();
 
   // The X keysym of every character below equals its Unicode code point, so a
   // key is sent exactly like the physical-keyboard path (keysym injection).
+  // The 'Sym' layouts are the symbols layer (123/ABC); the bottom row always
+  // keeps the layer toggle plus Tab and Esc. ZWNJ (U+200C) lives on Persian.
   const VK_LAYOUTS = {
     en: [
       ['1','2','3','4','5','6','7','8','9','0'],
       ['q','w','e','r','t','y','u','i','o','p'],
       ['a','s','d','f','g','h','j','k','l'],
       ['shift','z','x','c','v','b','n','m','bs'],
-      ['space','enter']
+      ['123','tab','esc','space','enter']
+    ],
+    enSym: [
+      ['1','2','3','4','5','6','7','8','9','0'],
+      ['-','/',':',';','(',')','$','&','@','"'],
+      ['.',',','?','!',"'",'[',']','{','}','|'],
+      ['\\','#','%','^','*','+','=','<','>','bs'],
+      ['abc','tab','esc','space','enter']
     ],
     fa: [
       ['۱','۲','۳','۴','۵','۶','۷','۸','۹','۰'],
       ['ض','ص','ث','ق','ف','غ','ع','ه','خ','ح','ج','چ'],
       ['ش','س','ی','ب','ل','ا','ت','ن','م','ک','گ'],
       ['shift','ظ','ط','ز','ر','ذ','د','پ','و','bs'],
-      ['space','enter']
+      ['123','tab','esc','zwnj','space','enter']
+    ],
+    faSym: [
+      ['۱','۲','۳','۴','۵','۶','۷','۸','۹','۰'],
+      ['٬','٫','[',']','÷','×','٪','←','→','«'],
+      ['»','{','}','<','>','؟','؛','،','ء','ٔ'],
+      ['ـ','ّ','-','_','+','=','\\','|','/','bs'],
+      ['abc','tab','esc','space','enter']
     ]
   };
   const VK_SPECIAL = {
     shift: { sym: 0xFFE1, code: 'ShiftLeft', cls: 'wide fn shift', label: '\u21E7' },
     bs:    { sym: 0xFF08, code: 'Backspace', cls: 'wide fn', label: '\u232B' },
     space: { sym: 0x20,   code: 'Space',     cls: 'space fn', label: 'space' },
-    enter: { sym: 0xFF0D, code: 'Enter',     cls: 'wide fn', label: '\u21B5' }
+    enter: { sym: 0xFF0D, code: 'Enter',     cls: 'wide fn', label: '\u21B5' },
+    tab:   { sym: 0xFF09, code: 'Tab',       cls: 'fn', label: 'tab' },
+    esc:   { sym: 0xFF1B, code: 'Escape',    cls: 'fn', label: 'esc' },
+    zwnj:  { sym: 0x200C, code: null,        cls: 'fn zwnj', label: '\u0646\u06CC\u0645\u200C\u0641\u0627\u0635\u0644\u0647' }
   };
+  let vkLayer = 'alpha';               // 'alpha' | 'sym' (toggled by 123/ABC)
   function vkKeysym(ch){
     // English layout with Shift pressed sends the uppercase keysym (the remote
     // X server types the case itself, so no Shift key is ever held remotely).
-    if(vkShift && vkLang === 'en'){
+    if(vkShift && vkLayer === 'alpha' && vkLang === 'en'){
       const up = ch.toUpperCase();
       if(up !== ch) return up.charCodeAt(0);
     }
@@ -1258,9 +1384,27 @@
     for(const b of keys) b.textContent = ups ? b.dataset.ch.toUpperCase() : b.dataset.ch;
   }
   function vkToggleShift(){ vkShift = !vkShift; vkPaintShift(); }
+  function vkToggleLayer(){
+    vkLayer = vkLayer === 'sym' ? 'alpha' : 'sym';
+    vkShift = false;
+    vkRender();
+  }
+  function vkBsStart(){
+    vkTapSpecial(VK_SPECIAL.bs);
+    vkBsTimer = setTimeout(()=>{
+      vkBsInt = setInterval(()=>{
+        if(!vkOpen || !connected){ vkBsStop(); return; }
+        vkTapSpecial(VK_SPECIAL.bs);
+      }, 60);
+    }, 400);
+  }
+  function vkBsStop(){
+    if(vkBsTimer){ clearTimeout(vkBsTimer); vkBsTimer = null; }
+    if(vkBsInt){ clearInterval(vkBsInt); vkBsInt = null; }
+  }
   function vkRender(){
     vkbRows.replaceChildren();
-    for(const row of VK_LAYOUTS[vkLang]){
+    for(const row of VK_LAYOUTS[vkLang + (vkLayer === 'sym' ? 'Sym' : '')]){
       const r = document.createElement('div');
       r.className = row.length > 9 ? 'vkb-row dense' : 'vkb-row';
       for(const k of row){
@@ -1271,11 +1415,21 @@
           b.className = 'vk ' + sp.cls;
           b.textContent = sp.label;
           if(k === 'shift'){ vkShiftBtn = b; b.addEventListener('pointerdown', (ev)=>{ ev.preventDefault(); vkToggleShift(); }); }
+          else if(k === 'bs'){
+            b.addEventListener('pointerdown', (ev)=>{ ev.preventDefault(); vkBsStart(); });
+            b.addEventListener('pointerup', (ev)=>{ ev.preventDefault(); vkBsStop(); });
+            b.addEventListener('pointerleave', vkBsStop);
+            b.addEventListener('pointercancel', vkBsStop);
+          }
           else b.addEventListener('pointerdown', (ev)=>{ ev.preventDefault(); vkTapSpecial(sp); });
+        } else if(k === '123' || k === 'abc'){
+          b.className = 'vk fn';
+          b.textContent = k === '123' ? '123' : 'ABC';
+          b.addEventListener('pointerdown', (ev)=>{ ev.preventDefault(); vkToggleLayer(); });
         } else {
           b.className = 'vk';
           b.dataset.ch = k;
-          b.textContent = (vkShift && vkLang === 'en') ? k.toUpperCase() : k;
+          b.textContent = (vkShift && vkLayer === 'alpha' && vkLang === 'en') ? k.toUpperCase() : k;
           b.addEventListener('pointerdown', (ev)=>{ ev.preventDefault(); vkTapChar(k); });
         }
         r.appendChild(b);
@@ -1284,18 +1438,26 @@
     }
     vkPaintShift();
   }
+  function vkSyncHeight(){
+    const h = vkOpen ? vkbPanel.offsetHeight : 0;
+    try{ document.documentElement.style.setProperty('--vkb-h', h + 'px'); }catch(e){}
+    document.body.classList.toggle('vkb-open', vkOpen);
+  }
   function vkOpenPanel(){
     vkOpen = true;
     vkRender();
     vkbPanel.classList.remove('hidden');
     btnKbd.classList.add('act');
+    vkSyncHeight();
   }
   function vkClosePanel(remember){
     vkOpen = false;
     vkbPanel.classList.add('hidden');
     btnKbd.classList.remove('act');
+    vkSyncHeight();
     if(remember){ try{ localStorage.setItem('nexdesk_kbd_off', '1'); }catch(e){} }
   }
+  vkbPanel.addEventListener('contextmenu', (e)=>{ e.preventDefault(); });
   btnKbd.addEventListener('click', (e)=>{ e.stopPropagation(); if(vkOpen) vkClosePanel(); else vkOpenPanel(); });
   vkbCloseBtn.addEventListener('click', (e)=>{ e.stopPropagation(); vkClosePanel(true); });
   vkbLangBtn.addEventListener('click', (e)=>{

@@ -30,7 +30,14 @@ machine and **survives restarts**, so it works like a real desktop you can reach
   session connects.
 - **Mobile on-screen keyboard** — touch users get a virtual keyboard (English and Persian
   layouts) that types into the virtual desktop through the same keysym path as the physical
-  keyboard; it overlays the viewer only and never appears on the remote screen.
+  keyboard; it overlays the viewer only and never appears on the remote screen. It includes a
+  **symbols layer (123/ABC)** for both languages, a **ZWNJ (half-space) key** for Persian, and
+  **Tab / Esc**, a hold-to-repeat Backspace, and no long-press context menus.
+- **Mobile-optimized viewer** — on touch screens the top bar scrolls horizontally, hides the
+  duplicate quality read-out, and **auto-hides 4s after connecting** (any tap brings it back,
+  with a floating hint); the screen is **fit to width** by default, **double-tap or a floating
+  pill toggles actual size (1:1) with drag-to-pan**, the on-screen keyboard shrinks the remote
+  screen so the field you type in stays visible, and overscroll/rubber-banding is disabled.
 - **Live resource meter** — the top bar shows real **CPU %** and **RAM used/total** with a
   colour gauge (green → yellow → red), reading NexDesk's own processes plus host totals.
 - **Adaptive connection quality** — a top-bar control (**Auto / High / Balanced / Low**) lets you
