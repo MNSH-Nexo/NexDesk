@@ -70,6 +70,13 @@
         box-shadow:0 14px 34px rgba(0,0,0,.45)}
   .qctl:hover .qinfo-pop{display:block}
   .qinfo-pop b{color:var(--ink);font-weight:700}
+  /* ---------- toast (quality applied / new version) ---------- */
+  #toast{position:fixed;left:50%;bottom:20px;z-index:60;max-width:min(92vw,440px);padding:11px 16px;border-radius:12px;
+         background:rgba(18,18,34,.97);border:1px solid rgba(255,255,255,.14);color:var(--ink);font-size:13px;font-weight:600;
+         text-align:center;line-height:1.5;opacity:0;pointer-events:none;transform:translateX(-50%) translateY(16px);
+         transition:opacity .25s ease, transform .25s ease;box-shadow:0 14px 40px rgba(0,0,0,.55);backdrop-filter:blur(10px)}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  #toast .upd{display:block;margin-top:4px;font-weight:700;color:var(--brand2)}
   /* ---------- resource meter (RAM/CPU) ---------- */
   .meter{display:flex;align-items:center;gap:6px;flex:none}
   .mcell{display:flex;align-items:center;gap:6px;height:30px;padding:0 10px;border-radius:999px;flex:none;
@@ -205,6 +212,8 @@
   </div>
 </div>
 
+<div id="toast" role="status" aria-live="polite"></div>
+
 <script>
   // Global error catch so that any module load/runtime failure is visible on screen.
   window.addEventListener('error', function (e) {
@@ -244,35 +253,49 @@
   function clearRetry(){ if(retryTimer){ clearTimeout(retryTimer); retryTimer = null; } }
 
   // ----- connection quality (Auto adaptive + manual presets) -----
-  // noVNC applies qualityLevel/compressLevel live: it re-sends SetEncodings so
-  // x11vnc switches its Tight/JPEG compression instantly — no reconnect needed.
-  const PRESETS = { high:{q:8,c:2}, balanced:{q:6,c:4}, low:{q:3,c:7} };
+  // noVNC's qualityLevel/compressLevel reach x11vnc through a live
+  // SetEncodings re-negotiation, which switches its Tight/JPEG compression on
+  // the spot — no reconnect needed. Presets are intentionally far apart so the
+  // difference between High and Low is obvious and visibly lowers the data sent
+  // to the viewer (important on weak networks).
+  const PRESETS = { high:{q:9,c:1}, balanced:{q:6,c:4}, low:{q:2,c:8} };
+  const QUALITY_NOTE = {
+    high: 'sharpest image and most detail — uses more data',
+    balanced: 'a good balance of sharpness and data',
+    low: 'smooth on weak networks — sends the least data'
+  };
   const qSel = $('qualitySel'), qInfo = $('qinfo');
   let qualityMode = 'auto';
   let linkEwma = null;   // smoothed {b: delivered kbps, r: round-trip ms}
   let lastQ = null;
+  let lastModeApplied = null;
   function applyQuality(q, c){
     if(!rfb) return;
     try { if(Number.isInteger(q) && q >= 0 && q <= 9) rfb.qualityLevel = q; } catch(e){}
     try { if(Number.isInteger(c) && c >= 0 && c <= 9) rfb.compressLevel = c; } catch(e){}
     lastQ = q;
   }
-  function linkLabel(){
+  function modeWord(){
+    return qualityMode === 'auto' ? 'Auto' : qualityMode.charAt(0).toUpperCase() + qualityMode.slice(1);
+  }
+  function renderQ(){
     const e = linkEwma || { r:0, b:0 };
     const q = lastQ == null ? '–' : 'Q' + lastQ;
-    return q + ' · ' + Math.round(e.b) + ' kbps · ' + Math.round(e.r) + ' ms';
+    qInfo.textContent = modeWord() + ' · ' + q + ' · ' + Math.round(e.b) + ' kbps';
+    qInfo.title = 'Live link — ' + q + ' · ' + Math.round(e.b) + ' kbps · ' + Math.round(e.r) + ' ms latency';
   }
   function pickAutoQ(r, b){
     // Struggling (high latency or saturated delivery) -> cut quality hard.
-    if(r > 380 || b > 6000) return { q:3, c:7 };
-    if(b > 4000 || r > 260) return { q:4, c:6 };
+    if(r > 380 || b > 6000) return { q:3, c:8 };
+    if(b > 4000 || r > 260) return { q:4, c:7 };
     if(b > 2200)            return { q:5, c:5 };
     // Easy link -> restore crispness.
-    if(r < 150 && b < 1200) return { q:7, c:3 };
+    if(r < 150 && b < 1200) return { q:8, c:1 };
     return { q:6, c:4 };
   }
   async function linkTick(){
-    if(qualityMode !== 'auto' || !rfb) return;
+    // Always read the live metrics (even in a manual mode) so the viewer shows
+    // the real effect of a quality choice on the data actually flowing to it.
     try{
       const r = await fetch(location.origin + '/' + webpath + '/api/link',
         { headers:{ 'Accept':'application/json' }, credentials:'same-origin' });
@@ -283,24 +306,65 @@
       linkEwma = linkEwma
         ? { b: 0.55*linkEwma.b + 0.45*rawB, r: 0.55*linkEwma.r + 0.45*rawR }
         : { b: rawB, r: rawR };
-      const s = pickAutoQ(linkEwma.r, linkEwma.b);
-      applyQuality(s.q, s.c);
-      qInfo.textContent = linkLabel();
+      if(qualityMode === 'auto'){
+        const s = pickAutoQ(linkEwma.r, linkEwma.b);
+        applyQuality(s.q, s.c);
+      }
+      renderQ();
     }catch(e){}
   }
+  function toast(msg, ms){
+    const t = $('toast');
+    if(!t) return;
+    t.innerHTML = msg;
+    t.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => t.classList.remove('show'), ms || 3200);
+  }
   function setQualityMode(m){
+    const notify = m !== lastModeApplied;
+    lastModeApplied = m;
     qualityMode = m;
     linkEwma = null;
+    try { localStorage.setItem('nexdesk_quality', m); } catch(e){}
     if(PRESETS[m]){
       const p = PRESETS[m];
       applyQuality(p.q, p.c);
-      qInfo.textContent = m.charAt(0).toUpperCase() + m.slice(1);
-    } else if(m === 'auto'){
-      qInfo.textContent = 'Auto';
+      if(notify){
+        const name = m.charAt(0).toUpperCase() + m.slice(1);
+        toast('<b>Quality: ' + name + '</b><span class="upd">' + QUALITY_NOTE[m] + '</span>', 3600);
+      }
     }
+    renderQ();
   }
   qSel.addEventListener('change', () => setQualityMode(qSel.value));
   setInterval(linkTick, 2000);
+
+  // ----- auto-update: always deliver the latest build -----
+  // The gateway reports which build is running. On each visit we sample it once;
+  // if a later poll returns a different (newer) build, the page reloads itself
+  // so the visitor always sees the newest version without ever clearing their
+  // browser cache. HTML/JS are served no-store, so the reload fetches fresh.
+  let loadedVersion = null;
+  let sawUpdate = false;
+  async function watchVersion(){
+    if(sawUpdate) return;
+    let cur = null;
+    try{
+      const r = await fetch(location.origin + '/' + webpath + '/api/version',
+        { headers:{ 'Accept':'application/json' }, credentials:'same-origin' });
+      if(r.ok){ const d = await r.json(); if(d && d.ok) cur = d.version; }
+    }catch(e){ return; }
+    if(!cur) return;
+    if(loadedVersion == null){ loadedVersion = cur; return; }
+    if(cur !== loadedVersion){
+      sawUpdate = true;
+      toast('A newer version of NexDesk is now live.<span class="upd">Updating automatically…</span>', 4000);
+      setTimeout(() => { try { location.reload(); } catch(e){} }, 1200);
+    }
+  }
+  setTimeout(watchVersion, 3000);
+  setInterval(watchVersion, 12000);
 
   // Never forward Caps Lock to the virtual desktop. Toggling it on your OS
   // already flips letter case inside the character (keysym) we send, so keeping
@@ -557,6 +621,13 @@
   }
   setInterval(refreshStats, 2000);
   refreshStats();
+
+  // Restore the visitor's last quality choice (persisted in their browser) so
+  // it survives page reloads, cache refreshes and reconnects.
+  try {
+    const saved = localStorage.getItem('nexdesk_quality');
+    if(saved && (saved === 'auto' || PRESETS[saved])){ qualityMode = saved; qSel.value = saved; }
+  } catch(e){}
 
   connect();
 </script>
