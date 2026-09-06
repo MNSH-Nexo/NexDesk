@@ -237,8 +237,8 @@ BROWSER_RES="${BROWSER_RES:-auto}"       # 'auto' -> tuned/preserved for this se
 DISPLAY_RES="$BROWSER_RES"
 if [ "$DISPLAY_RES" = "auto" ]; then
   # Updating an existing install: keep the screen size the owner already chose.
-  _cur="$(sed -nE 's#.*-screen 0 ([0-9]+x[0-9]+)x[0-9]+.*#\1#p' /etc/systemd/system/nexdesk-display.service.d/screen.conf 2>/dev/null | head -1)"
-  [ -z "$_cur" ] && _cur="$(sed -nE 's#ExecStart=.*-screen 0 ([0-9]+x[0-9]+)x[0-9]+.*#\1#p' /etc/systemd/system/nexdesk-display.service 2>/dev/null | head -1)"
+  _cur="$(sed -nE 's#.*-screen 0 ([0-9]+x[0-9]+)x[0-9]+.*#\1#p' /etc/systemd/system/nexdesk-display.service.d/screen.conf 2>/dev/null | head -1)" || true
+  [ -z "$_cur" ] && _cur="$(sed -nE 's#ExecStart=.*-screen 0 ([0-9]+x[0-9]+)x[0-9]+.*#\1#p' /etc/systemd/system/nexdesk-display.service 2>/dev/null | head -1)" || true
   if [ -n "$_cur" ]; then
     DISPLAY_RES="$_cur"; BROWSER_RES="$_cur"
     echo -e "  ${C_GRN}  [ok]${C_RESET} Existing install — keeping screen size ${DISPLAY_RES}."
