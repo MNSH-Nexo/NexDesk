@@ -658,6 +658,10 @@ function handleAudioUpgrade(req, socket, head, ip){
     try {
       child = spawn('parec', [
         '--device=' + AUDIO_SOURCE, '--format=s16le', '--rate=' + rate, '--channels=' + channels,
+        // pacat/parec default to a 2000 ms capture buffer, which makes sound
+        // arrive ~2 s late on the viewer. 80 ms keeps the stream stable while
+        // keeping end-to-end audio latency near-realtime.
+        '--latency-msec=80',
       ], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (e) { LFILE.audio('SPAWN ERROR ' + e.message); L.error('audio spawn error', e.message); stop('spawnError'); return; }
     child.stdout.on('data', (d) => {

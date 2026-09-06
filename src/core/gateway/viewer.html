@@ -1089,7 +1089,7 @@
     ringCap = Math.max(1024, Math.ceil(aCfg.rate * 5)); // ~5s buffer
     ring = new Float32Array(ringCap); ringTail = 0; ringCount = 0;
     try{
-      aNode = actx.createScriptProcessor(4096, 0, 1);
+      aNode = actx.createScriptProcessor(2048, 0, 1);
       aNode.onaudioprocess = (ev) => {
         const out = ev.outputBuffer.getChannelData(0);
         const need = out.length;
