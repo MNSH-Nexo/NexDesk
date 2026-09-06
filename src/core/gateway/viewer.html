@@ -261,6 +261,40 @@
     .files-body{max-height:56vh}
   }
   @media (hover:none){ .factions{opacity:1} .fbtn{background:rgba(255,255,255,.08)} }
+  /* ---------- mobile on-screen keyboard ---------- */
+  .vkb-toggle{display:none}
+  #btnKbd.act{color:#fff;border-color:rgba(124,92,255,.6);background:rgba(124,92,255,.18)}
+  #vkb{position:fixed;left:0;right:0;bottom:0;z-index:80;background:rgba(10,10,20,.94);
+       backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-top:1px solid var(--chrome-border);
+       padding:8px 6px calc(8px + var(--sab));user-select:none;-webkit-user-select:none;
+       touch-action:manipulation;box-shadow:0 -18px 50px rgba(0,0,0,.45)}
+  #vkb.hidden{display:none}
+  #vkb .vkb-top{display:flex;align-items:center;gap:8px;margin:0 4px 8px}
+  #vkb .vkb-lang{height:30px;padding:0 12px;border-radius:8px;border:1px solid var(--chrome-border);
+        background:rgba(255,255,255,.06);color:var(--ink);font-size:12px;font-weight:800;letter-spacing:.5px;
+        cursor:pointer;flex:none}
+  #vkb .vkb-lang:active{background:rgba(124,92,255,.35)}
+  #vkb .vkb-lbl{flex:1;font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--ink-dim);text-align:center;
+        white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #vkb .vkb-hide{height:30px;width:30px;flex:none;border:1px solid var(--chrome-border);background:rgba(255,255,255,.06);
+        color:var(--ink-dim);border-radius:8px;font-size:15px;line-height:1;cursor:pointer}
+  #vkb .vkb-hide:active{color:var(--ink)}
+  #vkb .vkb-row{display:flex;gap:5px;margin-bottom:6px}
+  #vkb .vkb-row.dense{gap:3px}
+  #vkb .vk{flex:1;height:44px;min-width:0;border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.055);
+        color:var(--ink);font-size:17px;font-weight:600;font-family:inherit;border-radius:9px;cursor:pointer;padding:0;
+        display:flex;align-items:center;justify-content:center;transition:background .1s, transform .06s}
+  #vkb .vk:active{background:rgba(124,92,255,.4);transform:translateY(1px)}
+  #vkb .vk.wide{flex:1.8}
+  #vkb .vk.space{flex:4.5}
+  #vkb .vk.fn{font-size:13px;font-weight:800;color:var(--ink-dim)}
+  #vkb .vk.fn:active{color:#fff}
+  #vkb.shift-on .vk.fn.shift{background:var(--brand);color:#fff;border-color:transparent}
+  @media (max-width:640px){
+    #vkb .vk{height:42px;font-size:16px}
+    #vkb .vkb-row.dense .vk{font-size:14px}
+  }
+  @media (hover:none),(max-width:640px){ .vkb-toggle{display:inline-flex} }
 </style>
 </head>
 <body>
@@ -303,6 +337,7 @@
     <button class="btn" id="btnClip" title="Clipboard — paste text between your computer and the virtual desktop"><svg class="ic" viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg></button>
     <button class="btn" id="btnFiles" title="My Files — upload a file, then use it inside the virtual browser"><svg class="ic" viewBox="0 0 24 24"><path d="M12 4v11M8 11l4 4 4-4"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg></button>
     <button class="btn" id="btnSound" title="Virtual browser sound — on/off"><svg class="ic" id="soundIc" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 6a9 9 0 0 1 0 12"/></svg></button>
+    <button class="btn vkb-toggle" id="btnKbd" title="Keyboard — show or hide the on-screen keyboard"><svg class="ic" viewBox="0 0 24 24"><rect x="2.5" y="5.5" width="19" height="13" rx="2.5"/><path d="M6 9.5h.01M9.5 9.5h.01M13 9.5h.01M16.5 9.5h.01M6 13h.01M16.5 13h.01M9.5 13h5"/></svg></button>
     <button class="btn" id="btnRefresh" title="Reconnect"><svg class="ic" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg></button>
     <a class="btn danger" id="btnLogout" href="logout" title="Log out">Log out</a>
   </div>
@@ -384,6 +419,15 @@
       <button class="btn danger chooser-cancel" id="chooserCancel">Cancel</button>
     </div>
   </div>
+</div>
+
+<div id="vkb" class="hidden" aria-label="Virtual keyboard">
+  <div class="vkb-top">
+    <button class="vkb-lang" id="vkbLang" title="Keyboard language">EN</button>
+    <span class="vkb-lbl">Virtual keyboard</span>
+    <button class="vkb-hide" id="vkbClose" title="Hide keyboard" aria-label="Hide keyboard">&#9662;</button>
+  </div>
+  <div class="vkb-rows" id="vkbRows"></div>
 </div>
 
 <script>
@@ -1150,6 +1194,132 @@
     if(document.visibilityState === 'hidden'){ /* stream continues */ }
   });
   if(audioOn) startAudio();
+
+  // ==========================================================================
+  // Mobile on-screen keyboard — types into the virtual desktop through the same
+  // rfb.sendKey() path the physical keyboard uses. It is plain HTML laid over
+  // the viewer, so it never appears on the remote screen itself. On touch
+  // devices it opens automatically after the first successful connection; the
+  // top-bar button toggles it, and closing it is remembered on that device.
+  // ==========================================================================
+  const btnKbd = $('btnKbd'), vkbPanel = $('vkb'), vkbRows = $('vkbRows'),
+        vkbLangBtn = $('vkbLang'), vkbCloseBtn = $('vkbClose');
+  const IS_TOUCH = window.matchMedia('(hover: none), (max-width: 640px)').matches;
+  let vkLang = 'en', vkShift = false, vkOpen = false, vkAutoDone = false, vkShiftBtn = null;
+  try{ if(localStorage.getItem('nexdesk_kbd_lang') === 'fa') vkLang = 'fa'; }catch(e){}
+  vkbLangBtn.textContent = vkLang.toUpperCase();
+
+  // The X keysym of every character below equals its Unicode code point, so a
+  // key is sent exactly like the physical-keyboard path (keysym injection).
+  const VK_LAYOUTS = {
+    en: [
+      ['1','2','3','4','5','6','7','8','9','0'],
+      ['q','w','e','r','t','y','u','i','o','p'],
+      ['a','s','d','f','g','h','j','k','l'],
+      ['shift','z','x','c','v','b','n','m','bs'],
+      ['space','enter']
+    ],
+    fa: [
+      ['۱','۲','۳','۴','۵','۶','۷','۸','۹','۰'],
+      ['ض','ص','ث','ق','ف','غ','ع','ه','خ','ح','ج','چ'],
+      ['ش','س','ی','ب','ل','ا','ت','ن','م','ک','گ'],
+      ['shift','ظ','ط','ز','ر','ذ','د','پ','و','bs'],
+      ['space','enter']
+    ]
+  };
+  const VK_SPECIAL = {
+    shift: { sym: 0xFFE1, code: 'ShiftLeft', cls: 'wide fn shift', label: '\u21E7' },
+    bs:    { sym: 0xFF08, code: 'Backspace', cls: 'wide fn', label: '\u232B' },
+    space: { sym: 0x20,   code: 'Space',     cls: 'space fn', label: 'space' },
+    enter: { sym: 0xFF0D, code: 'Enter',     cls: 'wide fn', label: '\u21B5' }
+  };
+  function vkKeysym(ch){
+    // English layout with Shift pressed sends the uppercase keysym (the remote
+    // X server types the case itself, so no Shift key is ever held remotely).
+    if(vkShift && vkLang === 'en'){
+      const up = ch.toUpperCase();
+      if(up !== ch) return up.charCodeAt(0);
+    }
+    return ch.charCodeAt(0);
+  }
+  function vkTapChar(ch){
+    if(!rfb || !connected) return;
+    const sym = vkKeysym(ch);
+    try{ rfb.sendKey(sym, null, true); rfb.sendKey(sym, null, false); }catch(e){}
+  }
+  function vkTapSpecial(sp){
+    if(!rfb || !connected) return;
+    try{ rfb.sendKey(sp.sym, sp.code, true); rfb.sendKey(sp.sym, sp.code, false); }catch(e){}
+  }
+  function vkPaintShift(){
+    vkbPanel.classList.toggle('shift-on', vkShift);
+    const ups = vkShift && vkLang === 'en';
+    const keys = vkbRows.querySelectorAll('button[data-ch]');
+    for(const b of keys) b.textContent = ups ? b.dataset.ch.toUpperCase() : b.dataset.ch;
+  }
+  function vkToggleShift(){ vkShift = !vkShift; vkPaintShift(); }
+  function vkRender(){
+    vkbRows.replaceChildren();
+    for(const row of VK_LAYOUTS[vkLang]){
+      const r = document.createElement('div');
+      r.className = row.length > 9 ? 'vkb-row dense' : 'vkb-row';
+      for(const k of row){
+        const b = document.createElement('button');
+        b.type = 'button';
+        if(VK_SPECIAL[k]){
+          const sp = VK_SPECIAL[k];
+          b.className = 'vk ' + sp.cls;
+          b.textContent = sp.label;
+          if(k === 'shift'){ vkShiftBtn = b; b.addEventListener('pointerdown', (ev)=>{ ev.preventDefault(); vkToggleShift(); }); }
+          else b.addEventListener('pointerdown', (ev)=>{ ev.preventDefault(); vkTapSpecial(sp); });
+        } else {
+          b.className = 'vk';
+          b.dataset.ch = k;
+          b.textContent = (vkShift && vkLang === 'en') ? k.toUpperCase() : k;
+          b.addEventListener('pointerdown', (ev)=>{ ev.preventDefault(); vkTapChar(k); });
+        }
+        r.appendChild(b);
+      }
+      vkbRows.appendChild(r);
+    }
+    vkPaintShift();
+  }
+  function vkOpenPanel(){
+    vkOpen = true;
+    vkRender();
+    vkbPanel.classList.remove('hidden');
+    btnKbd.classList.add('act');
+  }
+  function vkClosePanel(remember){
+    vkOpen = false;
+    vkbPanel.classList.add('hidden');
+    btnKbd.classList.remove('act');
+    if(remember){ try{ localStorage.setItem('nexdesk_kbd_off', '1'); }catch(e){} }
+  }
+  btnKbd.addEventListener('click', (e)=>{ e.stopPropagation(); if(vkOpen) vkClosePanel(); else vkOpenPanel(); });
+  vkbCloseBtn.addEventListener('click', (e)=>{ e.stopPropagation(); vkClosePanel(true); });
+  vkbLangBtn.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    vkLang = vkLang === 'en' ? 'fa' : 'en';
+    vkShift = false;
+    vkbLangBtn.textContent = vkLang.toUpperCase();
+    try{ localStorage.setItem('nexdesk_kbd_lang', vkLang); }catch(e){}
+    vkRender();
+  });
+  // Tapping the remote screen (outside the panel) hides the keyboard again.
+  document.addEventListener('pointerdown', (ev)=>{
+    if(!vkOpen) return;
+    if(vkbPanel.contains(ev.target) || ev.target.id === 'btnKbd') return;
+    vkClosePanel();
+  });
+  // Touch devices: open the keyboard once after the first successful connection
+  // (unless the visitor closed it before on this device).
+  new MutationObserver(()=>{
+    if(!overlay.classList.contains('hidden') || vkAutoDone || !IS_TOUCH) return;
+    vkAutoDone = true;
+    try{ if(localStorage.getItem('nexdesk_kbd_off')) return; }catch(e){}
+    vkOpenPanel();
+  }).observe(overlay, { attributes:true, attributeFilter:['class'] });
 
   connect();
 </script>

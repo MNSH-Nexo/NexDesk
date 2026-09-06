@@ -28,6 +28,9 @@ machine and **survives restarts**, so it works like a real desktop you can reach
   are forwarded to the virtual X display, and the guest **Caps Lock is never forwarded** to the
   remote (case is controlled by your own keyboard). Stuck modifier keys are cleared when a
   session connects.
+- **Mobile on-screen keyboard** — touch users get a virtual keyboard (English and Persian
+  layouts) that types into the virtual desktop through the same keysym path as the physical
+  keyboard; it overlays the viewer only and never appears on the remote screen.
 - **Live resource meter** — the top bar shows real **CPU %** and **RAM used/total** with a
   colour gauge (green → yellow → red), reading NexDesk's own processes plus host totals.
 - **Adaptive connection quality** — a top-bar control (**Auto / High / Balanced / Low**) lets you
