@@ -387,7 +387,7 @@ mem_show() {
       rss="$(awk '/^VmRSS:/{print $2}' "/proc/$pid/status" 2>/dev/null || echo 0)"
       echo "$((rss)) $pid"
     done | sort -rn | head -8 | while read -r rss pid; do
-      tp="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -oE '\-\-type=[A-Za-z-]+' | head -1)"
+      tp="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -oE '\-\-type=[A-Za-z-]+' | head -1)" || true
       printf '    %7d MiB   %s\n' "$((rss/1024))" "${tp:-browser}"
     done
   fi
