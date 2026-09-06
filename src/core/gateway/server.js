@@ -418,6 +418,35 @@ router.get('/api/version', (req, res) => {
   res.json({ ok:true, version: APP_VERSION });
 });
 
+// ---- Upload-injection: "choose file" inside the virtual browser ----
+// GET: does the virtual browser currently want a file? (viewer polls this)
+router.get('/api/chooser', (req, res) => {
+  if(!authed(req)) return res.status(401).json({ ok:false, error:'unauthorized' });
+  if (!cdp.pending) return res.json({ ok:true, pending:false, enabled: cdp.enabled });
+  res.json({ ok:true, pending:true, mode: cdp.pending.mode, since: Math.round((Date.now()-cdp.pending.at)/1000) });
+});
+
+// POST: the visitor picked an uploaded file to feed to the site, or cancelled.
+router.post('/api/chooser', (req, res) => {
+  if(!authed(req)) return res.status(401).json({ ok:false, error:'unauthorized' });
+  const action = req.body && req.body.action;
+  if (action === 'cancel') {
+    cdpCancelPending('viewerCancel');
+    return res.json({ ok:true });
+  }
+  if (action === 'inject') {
+    const name = safeFileName(req.body && req.body.file);
+    if (!name) return res.status(400).json({ ok:false, error:'invalid file' });
+    const full = path.resolve(MYFILES_DIR, name);
+    if (!full.startsWith(MYFILES_DIR + path.sep)) return res.status(400).json({ ok:false, error:'invalid file' });
+    let st = null; try { st = fs.statSync(full); } catch (e) {}
+    if (!st || st.isDirectory()) return res.status(404).json({ ok:false, error:'file not found' });
+    const r = cdpInject(full);
+    return res.json(r.ok ? { ok:true } : { ok:false, error:r.error });
+  }
+  return res.status(400).json({ ok:false, error:'bad action' });
+});
+
 // ---- My Files: list, upload (binary PUT), download, delete ----
 // All under BASE and cookie-authenticated. Uploads are streamed to a temporary
 // file then atomically renamed into place, so a dropped connection can never
@@ -693,6 +722,108 @@ function handleUpgrade(req, socket, head) {
     tcp.on('error', (e) => { L.error('vnc tcp error', ip, e.message); teardown('vncError'); });
   });
 }
+// ===================== Upload injection bridge (Chrome CDP) =====================
+// The virtual browser is a real Chrome on the virtual desktop, so a website's
+// "choose file" normally opens the Linux file dialog *there* — which the visitor
+// cannot use (their local files aren't on the desktop). Instead we drive Chrome
+// through the DevTools Protocol: when Chrome asks for a file we swallow the
+// dialog and tell the viewer. When the visitor picks an already-uploaded file
+// (or uploads one on the spot), we set the page's <input type=file> directly
+// from /home/nexdesk/MyFiles — no Linux window ever appears.
+//
+// Chrome must be running with --remote-debugging-port (see nexdesk-browser).
+// We poll its /json/list for page targets and attach a per-page CDP socket that
+// enables file-chooser interception. If CDP is unreachable we simply do nothing,
+// so the browser keeps its normal native dialog (fail-open, safe).
+const CDP_HTTP    = process.env.CHROME_CDP_HTTP || 'http://127.0.0.1:9223';
+const CDP_POLL_MS = parseInt(process.env.CDP_POLL_MS || '2000', 10);
+const CHOOSER_TTL_MS = parseInt(process.env.CHOOSER_TTL_MS || '180000', 10);
+
+const cdp = {
+  pages: new Map(),      // targetId -> { ws, id }
+  pending: null,         // { pageId, backendNodeId, mode, at }
+  enabled: false,
+  _ttl: null,
+};
+function cdpJson(p){
+  return new Promise((resolve) => {
+    const r = http.get(CDP_HTTP + p, (s) => {
+      let b = ''; s.on('data', (d) => { b += d; });
+      s.on('end', () => { try { resolve(JSON.parse(b)); } catch (e) { resolve(null); } });
+    });
+    r.on('error', () => resolve(null));
+    r.setTimeout(3000, () => { try { r.destroy(); } catch (e) {} resolve(null); });
+  });
+}
+function cdpCancelPending(why){
+  const p = cdp.pending;
+  if (cdp._ttl){ clearTimeout(cdp._ttl); cdp._ttl = null; }
+  cdp.pending = null;
+  if (!p) return;
+  const page = cdp.pages.get(p.pageId);
+  if (page && page.ws && page.ws.readyState === WebSocket.OPEN){
+    try { page.ws.send(JSON.stringify({ id: Date.now(), method: 'Page.handleFileChooser', params: { action: 'cancel' } })); } catch (e) {}
+  }
+  LFILE.files('CHOP cancel (' + (why || 'timeout') + ')');
+  L.info('file chooser cancelled', why || 'timeout');
+}
+function setPendingChooser(pageId, params){
+  cdpCancelPending('superseded');           // resolve any earlier pending dialog first
+  cdp.pending = { pageId, backendNodeId: params.backendNodeId, mode: params.mode, at: Date.now() };
+  cdp._ttl = setTimeout(() => cdpCancelPending('timeout'), CHOOSER_TTL_MS);
+  if (cdp._ttl.unref) cdp._ttl.unref();
+  LFILE.files('CHOP open (intercept) backendNodeId=' + params.backendNodeId + ' mode=' + params.mode);
+  L.info('file chooser intercepted — waiting for viewer to pick a file');
+}
+function cdpInject(fullPath){
+  const p = cdp.pending;
+  if (cdp._ttl){ clearTimeout(cdp._ttl); cdp._ttl = null; }
+  cdp.pending = null;
+  if (!p) return { ok:false, error:'no pending file request' };
+  const page = cdp.pages.get(p.pageId);
+  if (!page || !page.ws || page.ws.readyState !== WebSocket.OPEN) return { ok:false, error:'browser target went away' };
+  const msg = JSON.stringify({ id: Date.now(), method: 'DOM.setFileInputFiles',
+    params: { backendNodeId: p.backendNodeId, files: [fullPath] } });
+  try { page.ws.send(msg); } catch (e) { return { ok:false, error:'injection send failed' }; }
+  LFILE.files('INJECT name=' + path.basename(fullPath) + ' into page=' + p.pageId);
+  L.info('file injected into virtual page', path.basename(fullPath));
+  return { ok:true };
+}
+async function cdpPoll(){
+  const list = await cdpJson('/json/list');
+  if (!Array.isArray(list)) return;
+  const pages = list.filter((t) => t && t.type === 'page' && t.webSocketDebuggerUrl && /^ws/.test(t.webSocketDebuggerUrl));
+  const seen = new Set();
+  for (const t of pages){
+    seen.add(t.id);
+    if (cdp.pages.has(t.id)) continue;
+    let ws;
+    try { ws = new WebSocket(t.webSocketDebuggerUrl); } catch (e) { continue; }
+    const rec = { id: t.id, ws };
+    ws.on('open', () => {
+      cdp.enabled = true;
+      try {
+        ws.send(JSON.stringify({ id: 1, method: 'DOM.enable' }));
+        ws.send(JSON.stringify({ id: 2, method: 'Page.enable' }));
+        ws.send(JSON.stringify({ id: 3, method: 'Page.setInterceptFileChooserDialog', params: { enabled: true } }));
+      } catch (e) {}
+      L.debug('cdp attached page target', t.id);
+    });
+    ws.on('message', (data) => {
+      let m = null; try { m = JSON.parse(String(data)); } catch (e) { return; }
+      if (m && m.method === 'Page.fileChooserOpened') setPendingChooser(t.id, m.params || {});
+    });
+    ws.on('close', () => { cdp.pages.delete(t.id); if (!cdp.pages.size) cdp.enabled = false; });
+    ws.on('error', () => { try { ws.close(); } catch (e) {} });
+    cdp.pages.set(t.id, rec);
+  }
+  for (const id of Array.from(cdp.pages.keys())){
+    if (!seen.has(id)){ const r = cdp.pages.get(id); if (r && r.ws){ try { r.ws.close(); } catch (e) {} } cdp.pages.delete(id); }
+  }
+}
+setInterval(cdpPoll, CDP_POLL_MS).unref();
+cdpPoll();
+
 server.on('upgrade', handleUpgrade);
 
 server.listen(PORT, '0.0.0.0', () => L.info('NexDesk gateway listening on port ' + PORT + ' (log=' + LOG_LEVEL + ')'));

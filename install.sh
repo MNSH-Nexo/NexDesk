@@ -543,7 +543,7 @@ fi
 # 6. Systemd units
 # ---------------------------------------------------------------------------
 info "Writing systemd service units..."
-BROWSER_OPTS="--disable-gpu --disable-dev-shm-usage --disable-software-rasterizer --no-first-run --no-default-browser-check --start-maximized"
+BROWSER_OPTS="--disable-gpu --disable-dev-shm-usage --disable-software-rasterizer --no-first-run --no-default-browser-check --start-maximized --remote-debugging-port=9223 --remote-debugging-address=127.0.0.1"
 cat > /etc/systemd/system/nexdesk-display.service <<UNIT
 [Unit]
 Description=NexDesk virtual display (Xvfb)
