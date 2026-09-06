@@ -17,6 +17,20 @@ const PORT = process.env.PORT || 8087;
 const VNC_HOST = process.env.VNC_HOST || '127.0.0.1';
 const VNC_PORT = parseInt(process.env.VNC_PORT || '5900', 10);
 const NOVNC_DIR = process.env.NOVNC_DIR || '/usr/share/novnc';
+// Cache-busting key for the noVNC static assets. The viewer asks for its files
+// under /novnc/v<key>/... so a stale page kept in the browser cache never hits a
+// URL the server cannot still answer: any /v<key>/ prefix is stripped by the
+// /novnc router, so every previously-served address keeps working. The key only
+// changes when the actual noVNC files on disk change.
+const NOVNC_KEY = (function () {
+  try {
+    const names = fs.readdirSync(NOVNC_DIR).sort();
+    const sig = names.map((n) => {
+      try { return n + ':' + fs.statSync(path.join(NOVNC_DIR, n)).mtimeMs; } catch (e) { return n + ':?'; }
+    }).join('|');
+    return crypto.createHash('sha1').update(sig).digest('hex').slice(0, 10);
+  } catch (e) { return '0000000000'; }
+})();
 const PASS_FILE = process.env.PASS_FILE || '/opt/nexdesk/config/pass.txt';
 const WEBPATH_FILE = process.env.WEBPATH_FILE || '/opt/nexdesk/config/webpath.txt';
 const SECRET_FILE = process.env.SECRET_FILE || '/opt/nexdesk/.secret';
@@ -259,13 +273,15 @@ router.post('/login', (req, res) => {
 // ---- Home (under BASE): the NexDesk full-screen viewer ----
 router.get('/', (req, res) => {
   if (!authed(req)) return res.redirect(BASE + '/login');
-  fs.stat(VIEWER_FILE, (e, st) => {
-    if (e || !st.isFile()){ L.error('viewer file missing', VIEWER_FILE); return res.status(500).send('Viewer not installed.'); }
+  fs.readFile(VIEWER_FILE, 'utf8', (e, html) => {
+    if (e){ L.error('viewer file missing', VIEWER_FILE); return res.status(500).send('Viewer not installed.'); }
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     noStore(res);
     res.setHeader('X-NexDesk-Version', APP_VERSION);
+    // Stamp the current noVNC cache-busting key into the page so its module
+    // imports point at /novnc/v<key>/... (served for any key, old or new).
+    res.send(html.split('__NOVNC_KEY__').join(NOVNC_KEY));
     L.debug('serving viewer to', req.socket.remoteAddress);
-    fs.createReadStream(VIEWER_FILE).pipe(res);
   });
 });
 
@@ -543,13 +559,21 @@ router.get('/api/files/:name/download', (req, res) => {
 });
 
 // ---- noVNC static assets (under BASE) ----
+// The viewer loads these under /novnc/v<key>/... (any key is accepted — the
+// optional v-prefixed segment is only a cache-buster, so addresses served by
+// earlier versions of the page keep working and can never 404). Plain
+// /novnc/... URLs are served as well. Files are revalidated on each request.
 router.use('/novnc', (req, res, next) => {
   if (!authed(req)) return res.redirect(BASE + '/login');
-  const rel = req.path === '/' ? 'vnc.html' : req.path;
+  let rel = req.path.replace(/^\/v[\w.-]+\//, '/');  // strip optional /v<key>/ cache-busting prefix
+  if (rel === '/') rel = 'vnc.html';
   const file = path.normalize(path.join(NOVNC_DIR, rel));
   if (!file.startsWith(NOVNC_DIR)) return res.status(403).end();
   fs.stat(file, (e, st) => {
-    if (e || st.isDirectory()){ L.debug('novnc 404', rel, '->', file); return res.status(404).end(); }
+    if (e || st.isDirectory()){
+      L.warn('novnc 404', req.originalUrl, '->', file);
+      return res.status(404).end();
+    }
     noCache(res);                       // revalidate each request (304 when unchanged)
     res.sendFile(file);
   });

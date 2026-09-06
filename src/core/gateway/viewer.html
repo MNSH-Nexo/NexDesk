@@ -400,7 +400,10 @@
   // responsive scaling and the control bar. The whole app runs under the secret
   // path that served this page (derived from location), so no URL is hardcoded.
 
-  import RFB from './novnc/core/rfb.js';
+  // The noVNC assets are fetched under a cache-busting key stamped into this
+  // page by the gateway (__NOVNC_KEY__). Any key is served by the server, so a
+  // previously cached copy of this page can never request a file that 404s.
+  import RFB from './novnc/v__NOVNC_KEY__/core/rfb.js';
 
   const $ = (id) => document.getElementById(id);
   const dot = $('dot'), statusEl = $('status'), overlay = $('overlay'),
