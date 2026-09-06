@@ -372,7 +372,14 @@ mem_show() {
     rss="$(awk '/^VmRSS:/{print $2}' "/proc/$pid/status" 2>/dev/null || echo 0)"
     rss="${rss:-0}"; tot=$((tot + rss)); cnt=$((cnt + 1))
   done
-  echo -e "  ${B}Chrome processes:${R} ${cnt}   · combined RAM: $((tot/1024)) MiB"
+  echo -e "  ${B}Chrome processes:${R} ${cnt}"
+  local chrome_mem=""
+  chrome_mem="$(systemctl show nexdesk-browser -p MemoryCurrent --value 2>/dev/null || true)"
+  if [[ "$chrome_mem" =~ ^[0-9]+$ ]] && [ "$chrome_mem" -gt 0 ]; then
+    echo -e "  ${B}NexDesk browser total RAM (cgroup):${R} $((chrome_mem/1048576)) MiB"
+  else
+    echo -e "  ${B}Combined RSS (may over-count shared pages):${R} $((tot/1024)) MiB"
+  fi
   if [ "$cnt" -gt 0 ]; then
     echo
     echo -e "  ${B}Heaviest Chrome processes (RAM / process type):${R}"
