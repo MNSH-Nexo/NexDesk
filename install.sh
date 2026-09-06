@@ -233,18 +233,26 @@ NX_HTTPS="${NX_HTTPS:-on}"            # 'on' (default) or 'off'
 NX_HTTPS_PORT="${NX_HTTPS_PORT:-8443}"
 DISPLAY_NUM=99
 VNC_PORT=5900
-BROWSER_RES="${BROWSER_RES:-auto}"       # 'auto' -> tuned to this server's RAM/CPU
+BROWSER_RES="${BROWSER_RES:-auto}"       # 'auto' -> tuned/preserved for this server
 DISPLAY_RES="$BROWSER_RES"
-# Auto-pick the best default screen size for the hardware (fresh installs).
 if [ "$DISPLAY_RES" = "auto" ]; then
-  _cores=$(nproc 2>/dev/null | tr -d '[:space:]' || echo 1)
-  _rammib=$(awk '/^MemTotal:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 2048)
-  if   [ "$_rammib" -ge 8000 ] && [ "$_cores" -ge 6 ]; then DISPLAY_RES="1920x1080"
-  elif [ "$_rammib" -ge 4096 ] && [ "$_cores" -ge 2 ]; then DISPLAY_RES="1600x900"
-  elif [ "$_rammib" -ge 2048 ];                        then DISPLAY_RES="1440x900"
-  else DISPLAY_RES="1280x720"; fi
-  BROWSER_RES="$DISPLAY_RES"
-  info "Detected hardware: ${_rammib} MiB RAM · ${_cores} core(s) — default screen ${DISPLAY_RES}."
+  # Updating an existing install: keep the screen size the owner already chose.
+  _cur="$(sed -nE 's#.*-screen 0 ([0-9]+x[0-9]+)x[0-9]+.*#\1#p' /etc/systemd/system/nexdesk-display.service.d/screen.conf 2>/dev/null | head -1)"
+  [ -z "$_cur" ] && _cur="$(sed -nE 's#ExecStart=.*-screen 0 ([0-9]+x[0-9]+)x[0-9]+.*#\1#p' /etc/systemd/system/nexdesk-display.service 2>/dev/null | head -1)"
+  if [ -n "$_cur" ]; then
+    DISPLAY_RES="$_cur"; BROWSER_RES="$_cur"
+    echo -e "  ${C_GRN}  [ok]${C_RESET} Existing install — keeping screen size ${DISPLAY_RES}."
+  else
+    # Fresh install: tune the default screen to this server's RAM/CPU.
+    _cores=$(nproc 2>/dev/null | tr -d '[:space:]' || echo 1)
+    _rammib=$(awk '/^MemTotal:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 2048)
+    if   [ "$_rammib" -ge 8000 ] && [ "$_cores" -ge 6 ]; then DISPLAY_RES="1920x1080"
+    elif [ "$_rammib" -ge 4096 ] && [ "$_cores" -ge 2 ]; then DISPLAY_RES="1600x900"
+    elif [ "$_rammib" -ge 2048 ];                        then DISPLAY_RES="1440x900"
+    else DISPLAY_RES="1280x720"; fi
+    BROWSER_RES="$DISPLAY_RES"
+    echo -e "  ${C_GRN}  [ok]${C_RESET} Fresh install — tuning screen to this server (${_rammib} MiB RAM · ${_cores} core) → ${DISPLAY_RES}."
+  fi
 fi
 ENABLE_HTTPS=1
 [[ "$NX_HTTPS" == "off" ]] && ENABLE_HTTPS=0
