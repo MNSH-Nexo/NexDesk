@@ -1,91 +1,133 @@
-<p align="center"><img src="assets/nexdesk-logo.png" alt="NexDesk logo" width="180"></p>
+<p align="center">
+  <img src="assets/nexdesk-logo.png" alt="NexDesk logo" width="180">
+</p>
 
-# NexDesk — Self-Hosted Virtual Cloud Browser
+<h1 align="center">NexDesk</h1>
+<p align="center"><strong>Self-Hosted Virtual Cloud Browser</strong></p>
+<p align="center">
+  Your own private, always-on Chrome in the cloud — reachable from any device,
+  guarded by a secret link and a password. Install once, connect from anywhere.
+</p>
 
-**NexDesk** turns any Debian/Ubuntu server into your own private "browser in the cloud".
-Install it once, and you get a **persistent, full-screen virtual Chrome** that you open from
-any device through your browser, guarded by a secret link and a password.
-
-Unlike browser-in-the-cloud SaaS, NexDesk is **self-hosted**: you own the server, the data,
-the session, and the key. The browser profile (tabs, logins, downloads) is stored on your
-machine and **survives restarts**, so it works like a real desktop you can reach anywhere.
-
----
-
-## Features
-
-- **Private by design** — the real UI lives under a randomly generated *secret path*; the
-  root and every unknown URL return a plain `404` so the service stays invisible to scanners.
-- **Single password login** — protected by a salted HMAC check and a signed, `HttpOnly`
-  session cookie; the password comparison is constant-time (immune to timing attacks).
-- **Persistent Chrome profile** — your tabs, logins and settings are saved on the server and
-  reload on every connection.
-- **Full-screen noVNC viewer** — an immersive, auto-hiding remote desktop inside the browser,
-  with zoom/fit toggles and a dark frame, ready for both desktop and mobile.
-- **Clipboard sync** — copy/paste text from your machine into the virtual desktop (`Ctrl+V`
-  inside the remote Chrome).
-- **Real keyboard language & Caps-Lock handling** — character keysyms (e.g. Persian layouts)
-  are forwarded to the virtual X display, and the guest **Caps Lock is never forwarded** to the
-  remote (case is controlled by your own keyboard). Stuck modifier keys are cleared when a
-  session connects.
-- **Mobile on-screen keyboard** — touch users get a virtual keyboard (English and Persian
-  layouts) that types into the virtual desktop through the same keysym path as the physical
-  keyboard; it overlays the viewer only and never appears on the remote screen. It includes a
-  **symbols layer (123/ABC)** for both languages, a **ZWNJ (half-space) key** for Persian, and
-  **Tab / Esc**, a hold-to-repeat Backspace, and no long-press context menus. It shows itself
-  automatically after connecting and whenever you tap the virtual screen; a floating keyboard
-  button keeps it one tap away even when the top bar is hidden, and it never auto-dismisses
-  while you type.
-- **Mobile-optimized viewer** — on touch screens the top bar scrolls horizontally, hides the
-  duplicate quality read-out, and **auto-hides 4s after connecting** (any tap brings it back,
-  with a floating hint); the screen is **fit to width** by default, **double-tap or a floating
-  pill toggles actual size (1:1) with drag-to-pan**, the on-screen keyboard shrinks the remote
-  screen so the field you type in stays visible, and overscroll/rubber-banding is disabled.
-  In **landscape** the top bar becomes a slim always-visible strip that sits
-  **above** the virtual screen (it never overlays the browser) and the keyboard turns into a
-  **translucent floating bar** that overlays the bottom edge — the page stays visible
-  through the keys, so the field you type into can be kept in sight.
-- **Live resource meter** — the top bar shows real **CPU %** and **RAM used/total** with a
-  colour gauge (green → yellow → red), reading NexDesk's own processes plus host totals.
-- **Adaptive connection quality** — a top-bar control (**Auto / High / Balanced / Low**) lets you
-  pick the remote-desktop quality. On **Auto**, NexDesk continuously measures the real delivery
-  rate and round-trip latency (shown live, e.g. `Q6 · 800 kbps · 60 ms`) and adjusts JPEG/colour
-  quality on the fly — dropping it on slow links and restoring it when the link recovers, all
-  without reconnecting.
-- **Self-healing connection** — if the link drops or the session is closed (even by a momentary
-  internet blip), the viewer **reconnects automatically** with a growing back-off and keeps
-  retrying on its own; no manual `Retry` needed in normal cases.
-- **Stale-cache-proof viewer** — if a browser keeps an old cached copy of the viewer page that
-  points at an outdated noVNC asset path (which happens after NexDesk updates), the page
-  detects it and **silently reloads itself once** with a fresh copy — visitors never need to
-  clear their cache to connect again.
-- **Robust bridge** — the gateway fully tears down every dead/half-open session (its own ping
-  watchdog drops unresponsive clients and every exit path frees the VNC socket), so a dropped
-  visitor can never wedge the single x11vnc connection and block the next viewer.
-- **Memory Saver on by default** — the virtual Chrome runs with Chrome's *Memory Saver*
-  (tab-discarding) enabled as the default, so background tabs stop eating the server's limited RAM.
-- **English-locale Chrome** — the profile is forced to `en-US` so pages do not flip to the
-  server region's language.
-- **Real Chrome sandbox** — deliberately *not* launched with `--no-sandbox`.
-- **Swap safety net** — during install, if the server has no active swap the installer
-  lets you choose how much swap to create (1/2/3/4G, a custom size, or skip).
-- **A clean installer and uninstaller** — one command brings the whole stack up as `systemd`
-  services; one command tears it down completely.
+<p align="center">
+  Debian / Ubuntu &nbsp;·&nbsp; systemd &nbsp;·&nbsp; Node.js &nbsp;·&nbsp; Chrome &nbsp;·&nbsp; noVNC &nbsp;·&nbsp; VNC
+</p>
 
 ---
 
-## Architecture
+## Contents
 
-NexDesk is a small stack of four cooperating components, managed by four `systemd` units.
+- [Why NexDesk](#why-nexdesk)
+- [Key capabilities](#key-capabilities)
+- [How it works](#how-it-works)
+- [Technology stack](#technology-stack)
+- [Installation](#installation)
+- [Uninstall](#uninstall)
+- [First connection](#first-connection)
+- [Project layout](#project-layout)
+- [Configuration](#configuration)
+- [HTTP API](#http-api)
+- [Network tuning](#network-tuning)
+- [Security model](#security-model)
+- [Managing the service](#managing-the-service)
+- [Roadmap](#roadmap)
+- [License](#license)
+
+---
+
+## Why NexDesk
+
+Most "browser in the cloud" services are a subscription: your browsing lives on
+someone else's servers, is reachable through someone else's doors, and your
+sessions, logins and data sit in a place you do not control.
+
+NexDesk turns any Debian or Ubuntu server into your **own** cloud browser. It
+runs a real, persistent, full-screen Chrome on that machine, and lets you open it
+from any device through a normal web page. Because it is self-hosted, you own the
+server, the session, the data and the key.
+
+- The **profile is persistent** — tabs, logins and downloads are saved on your
+  server and survive restarts, so it behaves like a real desktop you can reach
+  anywhere, not a disposable sandbox.
+- Everything reaches you through a **single, authenticated gateway** — no VNC
+  ports are ever exposed to the network.
+- It is **private by design** — the interface lives under an unguessable secret
+  path, and every other URL returns a plain `404`, so the service stays invisible
+  to scanners.
+
+NexDesk is a small, auditable stack of five cooperating services with one
+command to install and one to remove — nothing opaque, nothing cloud-locked.
+
+---
+
+## Key capabilities
+
+- **Private by design** — the real UI lives under a randomly generated secret
+  path; the root and every unknown URL return a plain `404`, so the service stays
+  invisible to scanners.
+- **Single password login** — protected by a salted HMAC check and a signed,
+  `HttpOnly` session cookie; the password comparison is constant-time and immune
+  to timing attacks.
+- **Persistent Chrome profile** — tabs, logins and settings are stored on the
+  server and reload on every connection.
+- **Full-screen noVNC viewer** — an immersive remote desktop inside your browser,
+  with zoom/fit toggles and a dark frame, ready for desktop and mobile.
+- **Near-real-time sound** — the virtual Chrome's audio is routed through a local
+  PulseAudio null sink and streamed to the visitor over a WebSocket, with a short
+  capture buffer for low latency.
+- **Real keyboard language handling** — character keysyms (for example Persian
+  layouts) are forwarded to the virtual display; the guest Caps Lock is never
+  forwarded, and stuck modifier keys are cleared on every connection.
+- **Clipboard sync** — copy and paste text between your machine and the virtual
+  desktop.
+- **Mobile on-screen keyboard** — touch users get English and Persian layouts
+  (with a symbols layer, ZWNJ / half-space, Tab / Esc and a hold-to-repeat
+  Backspace). It overlays the viewer only and never appears on the remote screen.
+- **Mobile-optimized viewer** — auto-hiding top bar, fit-to-width by default,
+  double-tap or a floating pill to toggle 1:1 zoom with drag-to-pan, and a layout
+  that keeps the field you type in visible. In landscape the controls become a
+  slim always-visible strip above the screen.
+- **Live resource meter** — the top bar shows real CPU percent and RAM
+  used/total with a colour gauge (green to yellow to red).
+- **Adaptive connection quality** — an Auto / High / Balanced / Low control. In
+  Auto mode NexDesk continuously measures delivered throughput and round-trip
+  latency and adjusts the JPEG quality live, dropping it on slow links and
+  restoring it as bandwidth recovers — without reconnecting.
+- **Self-healing connection** — if the link drops, the viewer reconnects on its
+  own with a growing back-off and keeps retrying; no manual action in normal
+  cases.
+- **Stale-cache-proof viewer** — if a cached viewer page points at an outdated
+  noVNC asset path, the page detects it and silently reloads itself once with a
+  fresh copy.
+- **Robust bridge** — the gateway tears down every dead or half-open session
+  (a ping watchdog and every exit path free the VNC socket), so a vanished visitor
+  can never wedge the single VNC connection and block the next viewer.
+- **Memory Saver on by default** — the virtual Chrome discards background tabs to
+  save the server's limited RAM.
+- **English-locale Chrome** — the profile is pinned to `en-US` so pages do not
+  flip to the server region's language.
+- **Real Chrome sandbox** — deliberately not launched with `--no-sandbox`.
+- **Swap safety net** — during install, a server without active swap is offered
+  1/2/3/4G (or a custom size) of swap to avoid out-of-memory kills.
+- **Clean installer and uninstaller** — one command brings the whole stack up as
+  `systemd` services; one command removes it completely.
+
+---
+
+## How it works
+
+NexDesk is a small stack of five cooperating components, each managed by its own
+`systemd` unit.
 
 | Service | Role |
 | --- | --- |
 | `nexdesk-display` | Starts **Xvfb**, a headless virtual display on `:99`. |
-| `nexdesk-vnc` | Runs **x11vnc**, which exposes the virtual display as a VNC server bound to **localhost:5900**. |
-| `nexdesk-browser` | Launches the persistent **Chrome** session on that display and pins it to the full virtual screen. |
+| `nexdesk-vnc` | Runs **x11vnc**, exposing the display as a VNC server bound to **localhost:5900**. |
+| `nexdesk-browser` | Launches the persistent **Chrome** session on that display, pinned to the full virtual screen. |
+| `nexdesk-audio` | Runs a private **PulseAudio** daemon with a null sink so the virtual Chrome has sound. |
 | `nexdesk-gateway` | The **Node.js / Express** gateway on port **8087** — the only public entry point. |
 
-Everything reaches the user only through the gateway:
+Every visitor reaches the system only through the gateway:
 
 ```
                           public network
@@ -94,85 +136,112 @@ Everything reaches the user only through the gateway:
                     |   NexDesk gateway    |   Express on 0.0.0.0:8087
                     |  (login · viewer ·   |   secret path /<secret>
                     |   noVNC · clipboard  |   WS<->VNC bridge
-                    |   · /api/stats       |   + adaptive-quality
-                    |   · /api/link)       |   + dead-session cleanup
+                    |   · audio · stats    |   + adaptive-quality
+                    |   · link)            |   + dead-session cleanup
                     +----------+-----------+
                        HTTP/WS  |  127.0.0.1
               +-----------------v------------------+
-              |  noVNC  <-- WebSocket -->  x11vnc   |  VNC server
+              |   noVNC <-- WebSocket --> x11vnc    |  VNC server
               |                    (localhost:5900) |  on display :99
               +-------------------+-----------------+
                                   |
                          +--------v--------+
-                         |  Xvfb   :99     |  headless virtual display
+                         |  Xvfb    :99    |  headless virtual display
                          |   +-- Chrome    |  persistent profile (~/.chrome)
+                         |   +-- PulseAudio|  virtual sound (null sink)
                          +-----------------+
 ```
 
-**Request flow for a visitor:**
+### Request flow for a visitor
 
-1. Browser hits `http://<server>:8087/<secret-path>/` → gateway asks for the password.
-2. A correct password issues an `HttpOnly` session cookie (`ndauth`) valid for 30 days.
-3. The gateway serves the noVNC viewer UI plus the noVNC static assets.
-4. The viewer opens a **WebSocket** to `/<secret-path>/vnc`; the gateway authenticates the
-   cookie, then **bridges** the WebSocket to the local VNC TCP port on `127.0.0.1:5900`.
-5. On connect, the gateway resets the virtual keyboard to a clean state (Caps off, no stuck
-   modifiers).
-6. Key and pointer events and framebuffer updates stream over that bridge in real time.
+1. The browser hits `http://<server>:8087/<secret-path>/` and the gateway asks
+   for the password.
+2. A correct password issues an `HttpOnly` session cookie (`ndauth`) valid for
+   30 days.
+3. The gateway serves the noVNC viewer UI and the noVNC static assets.
+4. The viewer opens a **WebSocket** to `/<secret-path>/vnc`; the gateway
+   authenticates the cookie, then **bridges** the socket to the local VNC port
+   on `127.0.0.1:5900`.
+5. On connect the gateway resets the virtual keyboard to a clean state (Caps
+   off, no stuck modifiers).
+6. Keyboard and pointer events and framebuffer updates stream over that bridge in
+   real time; audio streams over a second path from the PulseAudio sink.
 
-The VNC server only ever listens on **localhost** — it is never exposed directly to the
-network; the gateway is the single, authenticated entry point.
+The VNC server and PulseAudio daemon only ever listen on **localhost** — they are
+never exposed directly to the network. The gateway is the single authenticated
+entry point, and it can serve **HTTP and HTTPS together** (a generated
+self-signed certificate for the TLS listener).
+
+---
+
+## Technology stack
+
+| Layer | Technology |
+| --- | --- |
+| Gateway | Node.js + Express, `ws` for the WebSocket-to-VNC bridge |
+| Virtual display | Xvfb (headless X server, display `:99`) |
+| VNC server | x11vnc (bound to localhost only) |
+| Browser engine | Google Chrome with a persistent profile |
+| Virtual sound | PulseAudio private daemon with a null sink |
+| Remote-viewer client | noVNC (WebSocket VNC client in the browser) |
+| Orchestration | systemd units; interactive admin menu (`nexdesk`) |
+| Installer | single POSIX `bash` script with environment overrides |
 
 ---
 
 ## Installation
 
-**Requirements**
+### Requirements
 
-- Debian or Ubuntu server (systemd, `root` or `sudo`), ~2 GB RAM or more recommended.
-- A public IP and/or open or mapped ports (defaults: **8087** for HTTP, **8443** for HTTPS).
+- Debian or Ubuntu server with **systemd**, run as `root` or via `sudo`.
+- About **2 GB RAM or more** recommended (Chrome runs several processes).
+- A public IP, and/or open or mapped ports — **8087** for HTTP and **8443** for
+  HTTPS by default.
 
-**Quick start — one command, from anywhere**
+### Quick start — one command, from anywhere
 
-No need to download the repo or even have it on the machine. On any Debian/Ubuntu
-server with `curl` (and `sudo` for the privileged steps) just run:
+You do not need to download the repository or have it on the machine. On any
+Debian/Ubuntu server with `curl` (and `sudo` for the privileged steps), run:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/master/install.sh)
 ```
 
-That single command fetches the installer, downloads the NexDesk source, asks you
-a couple of simple questions (which HTTP port to use, whether to also enable
-HTTPS, whether to add swap) and then installs the whole stack. At the end it prints
+That single command fetches the installer, downloads the NexDesk source, asks a
+couple of simple questions (which HTTP port to use, whether to also enable
+HTTPS, whether to add swap) and installs the whole stack. At the end it prints
 your **personal links** (HTTP and, by default, an HTTPS one over a generated
 self-signed certificate) and the **password** — keep them secret.
 
-> **HTTPS by default.** The installer generates a self-signed certificate (valid ~2 years)
-> and serves HTTP **and** HTTPS together, so you get both
-> `http://<server>:8087/...` and `https://<server>:8443/...`. Because the certificate is
-> self-signed, your browser asks you to accept it once — that is normal and safe. Disable
-> it with `--no-https` (or `NX_HTTPS=off`).
+> **HTTPS by default.** The installer generates a self-signed certificate
+> (valid roughly two years) and serves HTTP **and** HTTPS together, so you get
+> both `http://<server>:8087/...` and `https://<server>:8443/...`. Because the
+> certificate is self-signed, your browser asks you to accept it once — that is
+> normal and safe. Disable it with `--no-https` (or `NX_HTTPS=off`).
 
 > The command pulls the installer from this repository's `master` branch, so the
 > repository must be **publicly readable** for installs on other servers to work.
 
-> Non-interactive runs (e.g. `curl -fsSL <url> | sudo bash`) skip the questions
-> and use the safe defaults (HTTP port `8087`, HTTPS enabled on `8443`, swap offered
-> only if missing). Every run writes a full transcript to `<install-dir>/logs/`.
+> Non-interactive runs (for example `curl -fsSL <url> | sudo bash`) skip the
+> questions and use the safe defaults (HTTP port `8087`, HTTPS enabled on
+> `8443`, swap offered only if missing). Every run writes a full transcript to
+> `<install-dir>/logs/`.
 
-**Update NexDesk** (keeps your link, password and browser profile):
+### Update NexDesk
+
+Updates keep your link, password and browser profile intact:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/master/install.sh) update
 ```
 
-**Remove NexDesk completely:**
+### Remove NexDesk completely
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/master/install.sh) uninstall
 ```
 
-**Custom install from a checkout**
+### Custom install from a checkout
 
 If you already have the repository on the server:
 
@@ -183,35 +252,48 @@ sudo ./install.sh --https-port 9443     # HTTPS on a different port
 sudo ./install.sh --no-https            # HTTP only
 ```
 
-> During install, if the server has no active swap the installer lets you pick how much swap
-> to create (1/2/3/4G, or a custom size like 512M/2G) — or skip. NexDesk runs several Chrome
-> processes, and swap prevents out-of-memory kills; pick a size that fits your free disk space.
-> To never touch swap, run with `NX_SWAP=off`.
+> During install, if the server has no active swap the installer lets you choose
+> how much to create (1/2/3/4G, or a custom size such as `512M`/`2G`), or to
+> skip. NexDesk runs several Chrome processes and swap prevents out-of-memory
+> kills — pick a size that fits your free disk space. To never touch swap, run
+> with `NX_SWAP=off`.
 
-Flags / environment overrides (env vars are equivalent to the flags):
+Flags and their equivalent environment overrides:
 
 | Flag | Env | Default | Meaning |
 | --- | --- | --- | --- |
 | `--port PORT` | `NX_PORT` | `8087` | Public HTTP listening port |
 | `--https-port PORT` | `NX_HTTPS_PORT` | `8443` | Public HTTPS listening port |
-| `--no-https` | `NX_HTTPS=off` | on | Serve HTTPS (self-signed) too |
+| `--no-https` | `NX_HTTPS=off` | on | Also serve HTTPS (self-signed) |
 | `--dir DIR` | `NX_DIR` | `/opt/nexdesk` | Install directory |
 | `--user USER` | `NX_USER` | `nexdesk` | Isolated service account |
+| — | `NX_SWAP` | `auto` | `off` to never touch swap |
+| — | `NX_SWAPFILE` | `/swapfile` | Custom swap file path |
+| — | `NX_SRC_URL` | (GitHub) | Custom source archive URL |
 
-> The installer pre-flights the system (free ports, disk space, a live dpkg lock),
-> installs Node.js automatically if it is missing (NodeSource, then the distro package
-> as an offline fallback), and retries `apt` if a background update holds the lock.
-> If the public IP cannot be reached it falls back to a local IP in the final report.
+### What the installer does
 
-The installer detects the OS, installs the engine (Chromium/Xvfb/x11vnc/noVNC) and the
-gateway dependencies, creates an **isolated service user**, generates the secret path,
-password and signing secret, generates the **self-signed TLS certificate**, wires up the
-four `systemd` units, starts the stack, prints a short **health report** for every service
-and port, and finally shows your personal HTTP **and** HTTPS links.
+The installer pre-flights the system (free ports, disk space, a live dpkg lock),
+then:
 
-> The personal links already contain the secret path, and the gateway only responds under
-> it — so sharing a full link, together with the password, is what grants access. A full
-> transcript of every run is saved under `<install-dir>/logs/installer-<timestamp>.log`.
+- detects the OS and installs the engine (Chromium/Chrome, Xvfb, x11vnc, noVNC,
+  PulseAudio);
+- installs Node.js automatically if it is missing (NodeSource, with the distro
+  package as an offline fallback), retrying `apt` if a background update holds
+  the lock;
+- installs the gateway dependencies and makes them readable by the service user;
+- creates an **isolated service user**;
+- generates the secret path, password and HMAC signing secret;
+- generates the **self-signed TLS certificate** (when HTTPS is enabled);
+- wires up the five `systemd` units and starts the stack;
+- prints a short **health report** for every service and port;
+- shows your personal HTTP **and** HTTPS links.
+
+> The personal links already contain the secret path, and the gateway only
+> responds under it — sharing a full link together with the password is what
+> grants access. A full transcript of every run is saved under
+> `<install-dir>/logs/installer-<timestamp>.log`. If the public IP cannot be
+> reached, the final report falls back to a local IP.
 
 ---
 
@@ -223,8 +305,8 @@ Remove NexDesk from any server without a local copy:
 bash <(curl -fsSL https://raw.githubusercontent.com/MNSH-Nexo/NexDesk/master/install.sh) uninstall
 ```
 
-From a checkout, the same thing (stops the services, removes the units, the
-install directory with all data, and the service account):
+From a checkout, the same thing — stops the services and removes the units, the
+install directory with all data, and the service account:
 
 ```bash
 sudo ./uninstall.sh               # stop services, remove units + directory + service user
@@ -233,137 +315,181 @@ sudo ./uninstall.sh --keep-user   # keep the 'nexdesk' account
 
 ---
 
-## Project layout
+## First connection
 
-```
-NexDesk/
-├── install.sh                 # one-command installer
-├── uninstall.sh               # clean teardown
-├── bin/
-│   └── nexdesk-browser.sh     # Chrome launcher (language, profile, window sizing)
-├── src/core/gateway/
-│   ├── server.js              # gateway: auth, viewer, noVNC, WS<->VNC, clipboard, stats
-│   ├── viewer.html            # full-screen noVNC UI (top bar, resource meter)
-│   └── package.json           # express + ws
-└── systemd/
-    ├── nexdesk-display.service
-    ├── nexdesk-vnc.service
-    ├── nexdesk-browser.service
-    └── nexdesk-gateway.service
-```
+1. Open the personal link the installer printed — something like
+   `http://<server>:8087/<secret-path>/`. Everything else on the server returns
+   `404`.
+2. Enter the password shown by the installer. A signed session cookie keeps you
+   signed in for 30 days.
+3. A full-screen remote Chrome appears. Use it as if it were a browser on your
+   own machine — tabs, downloads and logins persist on the server between
+   visits.
+4. On a phone, the on-screen keyboard (English and Persian) appears for typing;
+   the top bar auto-hides and returns on tap.
 
-Runtime secrets and data are generated under the install directory and are **never tracked by
-git** (see Security):
+To see your link, password and service status again from the server at any time,
+run the admin menu (installed as `nexdesk`):
 
-```
-/opt/nexdesk/
-├── config/pass.txt        # login password
-├── config/webpath.txt     # secret URL path
-├── .secret                # HMAC signing secret
-├── .chrome/               # live Chrome profile (sessions, logins, downloads)
-└── logs/                  # service logs
+```bash
+sudo nexdesk info      # print the link and password
+sudo nexdesk status    # show the state of the services
+sudo nexdesk           # open the full interactive menu
 ```
 
 ---
 
-## Configuration (environment variables)
+## Project layout
 
-**Gateway** (`server.js`)
+```
+NexDesk/
+├── install.sh                 # one-command installer (also update / uninstall)
+├── uninstall.sh               # clean teardown
+├── nexdesk-admin.sh           # interactive admin menu (linked as 'nexdesk')
+├── bin/
+│   ├── nexdesk-browser.sh     # Chrome launcher (language, profile, window sizing)
+│   └── nexdesk-audio.sh       # private PulseAudio daemon (null sink + routing)
+├── src/core/gateway/
+│   ├── server.js              # gateway: auth, viewer, noVNC, WS<->VNC, clipboard,
+│   │                          #          audio, adaptive quality, stats
+│   ├── viewer.html            # full-screen noVNC UI (top bar, keyboard, meters)
+│   └── package.json           # express + ws
+├── systemd/
+│   ├── nexdesk-display.service
+│   ├── nexdesk-vnc.service
+│   ├── nexdesk-browser.service
+│   ├── nexdesk-audio.service
+│   └── nexdesk-gateway.service
+└── assets/
+    └── nexdesk-logo.png
+```
+
+Runtime secrets and data are generated under the install directory and are
+**never tracked by git** (see [Security model](#security-model)):
+
+```
+/opt/nexdesk/
+├── config/
+│   ├── pass.txt            # login password
+│   ├── webpath.txt         # secret URL path
+│   └── tls/                # self-signed key + certificate
+├── .secret                 # HMAC signing secret
+├── .chrome/                # live Chrome profile (sessions, logins, downloads)
+└── logs/                   # installer + service logs
+```
+
+---
+
+## Configuration
+
+### Gateway (`server.js`)
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `PORT` | `8087` | Listening port |
+| `PORT` | `8087` | HTTP listening port |
+| `HTTPS_PORT` | `0` | When set to a port (and TLS files exist), also serve HTTPS |
+| `TLS_KEY` | `.../tls/key.pem` | Path to the TLS private key |
+| `TLS_CERT` | `.../tls/cert.pem` | Path to the TLS certificate |
 | `VNC_HOST` | `127.0.0.1` | VNC host the gateway bridges to |
 | `VNC_PORT` | `5900` | VNC port |
 | `NOVNC_DIR` | `/usr/share/novnc` | noVNC static files |
-| `PASS_FILE` | `/opt/nexdesk/config/pass.txt` | Password file |
-| `WEBPATH_FILE` | `/opt/nexdesk/config/webpath.txt` | Secret path file |
-| `SECRET_FILE` | `/opt/nexdesk/.secret` | Signing secret file |
+| `PASS_FILE` | `.../config/pass.txt` | Password file |
+| `WEBPATH_FILE` | `.../config/webpath.txt` | Secret path file |
+| `SECRET_FILE` | `.../.secret` | Signing secret file |
 | `VIEWER_FILE` | `.../viewer.html` | Viewer HTML |
 | `NEXDESK_DISPLAY` | `:99` | Virtual display for clipboard/keyboard |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
-**Browser** (`nexdesk-browser.sh`)
+### Browser (`bin/nexdesk-browser.sh`)
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `NEXDESK_DISPLAY` | `:99` | Display Chrome opens on |
 | `NEXDESK_CHROME` | `/usr/bin/google-chrome` | Chrome binary |
-| `NEXDESK_PROFILE` | `/opt/nexdesk/.chrome` | Persistent profile |
+| `NEXDESK_PROFILE` | `.../.chrome` | Persistent profile |
 | `NEXDESK_RES_X` | `1440` | Virtual resolution width |
 | `NEXDESK_RES_Y` | `900` | Virtual resolution height |
 | `NEXDESK_START_URL` | `about:blank` | Page Chrome opens with |
 
 ---
 
-## HTTP API (all under the secret path)
+## HTTP API
+
+All routes live under the secret path. Everything else — including the bare
+root — returns `404 Not found`.
 
 | Route | Method | Auth | Purpose |
 | --- | --- | --- | --- |
-| `/login` | GET | no | Show the (Persian, RTL) login form |
+| `/login` | GET | no | Show the login form |
 | `/login` | POST | no | Verify password, set `ndauth` cookie |
 | `/` | GET | cookie | Serve the full-screen viewer |
 | `/logout` | GET | — | Clear the cookie, back to login |
-| `/vnc` | WS | cookie | WebSocket to VNC bridge |
+| `/vnc` | WS | cookie | WebSocket to the VNC bridge |
 | `/novnc/*` | GET | cookie | noVNC static assets |
 | `/clipboard` | POST | cookie | Write text into the remote clipboard |
-| `/api/stats` | GET | cookie | Host + per-process CPU/RAM (used by the top bar) |
-| `/api/link` | GET | cookie | Live delivered throughput (kbps) + round-trip (ms) measured by the gateway (drives Auto quality) |
-
-Everything **outside** the secret path — including the bare root — returns `404 Not found`.
+| `/api/stats` | GET | cookie | Host and per-process CPU/RAM (top-bar meter) |
+| `/api/link` | GET | cookie | Live delivered throughput (kbps) and round-trip (ms) that drive Auto quality |
 
 ---
 
-## Tuning the connection (bandwidth / latency)
+## Network tuning
 
-NexDesk adapts to slow networks so the virtual desktop stays usable without burning bandwidth.
+NexDesk adapts to slow networks so the virtual desktop stays usable without
+burning bandwidth.
 
-- **Quality selector (top bar):** `Auto`, `High`, `Balanced` or `Low`. This controls the noVNC
-  JPEG quality and compression level, which x11vnc applies **live** — the change takes effect in
-  the current session, there is no reconnect.
-- **Auto mode:** every 2 seconds the gateway reports the real data actually delivered to your
-  browser (`/api/link`) together with the round-trip time. The viewer smooths those values and,
-  when the link struggles, drops quality immediately to keep motion fluid and data low; when the
-  link has headroom it restores crispness. A small live read-out (e.g. `Q6 · 800 kbps · 60 ms`)
+- **Quality selector (top bar):** `Auto`, `High`, `Balanced` or `Low`. This
+  controls the noVNC JPEG quality and compression level, which x11vnc applies
+  **live** — the change takes effect in the current session with no reconnect.
+- **Auto mode:** every two seconds the gateway reports the data actually
+  delivered to your browser (`/api/link`) together with the round-trip time. The
+  viewer smooths those values and, when the link struggles, drops quality
+  immediately to keep motion fluid and data low; when the link has headroom it
+  restores crispness. A small live read-out (for example `Q6 · 800 kbps · 60 ms`)
   shows the current quality, throughput and latency.
-- **Auto-reconnect:** if the connection drops for any reason while the tab is open, the viewer
-  reconnects on its own (1.5s → 8s back-off, up to 5 tries), including when you return to a tab
-  that was in the background during the drop. Only after the automatic attempts are exhausted do
-  you see a manual `Retry`.
-- **Dead-session cleanup:** the gateway pings each client and drops any that stop responding, and
-  tears the session down cleanly on every error/close path — so a visitor who vanishes never
-  leaves a half-open connection that could block the next viewer.
+- **Auto-reconnect:** if the connection drops while the tab is open, the viewer
+  reconnects on its own (a 1.5s to 8s back-off, up to five tries), including when
+  you return to a tab that was in the background during the drop. Only after the
+  automatic attempts are exhausted do you see a manual `Retry`.
+- **Dead-session cleanup:** the gateway pings each client and drops any that stop
+  responding, and tears the session down cleanly on every error and close path —
+  so a visitor who vanishes never leaves a half-open connection that could block
+  the next viewer.
 
 ### Memory Saver on the virtual Chrome
 
-Chrome's *Memory Saver* (which discards background tabs to free RAM) is enabled as the **default**
-on the persistent virtual browser. It is applied as a **recommended** policy so an operator can
-still toggle it inside the virtual Chrome at `chrome://settings/performance`:
+Chrome's *Memory Saver* (which discards background tabs to free RAM) is enabled
+by default on the persistent virtual browser. It is applied as a **recommended**
+policy so an operator can still toggle it inside the virtual Chrome at
+`chrome://settings/performance`:
 
 ```json
 # /etc/opt/chrome/policies/managed/nexdesk-performance.json
 [ { "HighEfficiencyModeEnabled": { "Value": true, "level": "recommended" } } ]
 ```
 
-On an already-installed server, create that file and `sudo systemctl restart nexdesk-browser`.
-It is safe on a memory-constrained host and has no effect while you are only using the active tab.
+On an already-installed server, create that file and run
+`sudo systemctl restart nexdesk-browser`. It is safe on a memory-constrained host
+and has no effect while you are using the active tab.
 
 ---
 
 ## Security model
 
-- **Secret-by-obscurity done properly:** the real app lives at an unguessable random path;
-  every other request (including root) returns a generic `404`. No login page is exposed at `/`.
-- **Password hashing:** salted **HMAC-SHA256** keyed by a server-side secret; the password is
-  never compared in plaintext and checks are **constant-time**.
-- **Signed cookie:** the `ndauth` value is an HMAC of the password under the same secret,
-  marked `HttpOnly` and scoped to its path, with a 30-day expiry.
-- **Local-only VNC:** x11vnc binds to `127.0.0.1`, never to a public interface — there is no
-  second port to attack.
+- **Secret-by-obscurity, done properly** — the real app lives at an unguessable
+  random path; every other request (including root) returns a generic `404`, and
+  no login page is exposed at `/`.
+- **Password hashing** — salted **HMAC-SHA256** keyed by a server-side secret; the
+  password is never compared in plaintext, and checks are **constant-time**.
+- **Signed cookie** — the `ndauth` value is an HMAC of the password under the same
+  secret, marked `HttpOnly` and scoped to its path, with a 30-day expiry.
+- **Local-only VNC and audio** — x11vnc and PulseAudio bind to `127.0.0.1`, never
+  to a public interface; there is no second port to attack.
 - **Real Chrome sandbox** is left enabled (no `--no-sandbox`).
-- **Single low-privilege user** runs the services; secrets and the live profile are owned by it.
-- **git hygiene:** `.secret`, `config/pass.txt`, `config/webpath.txt`, the `.chrome/` profile,
-  logs and lock/`node_modules` files are all gitignored so secrets can never be pushed.
+- **Single low-privilege user** runs the services; secrets and the live profile
+  are owned by it.
+- **git hygiene** — `.secret`, `config/pass.txt`, `config/webpath.txt`, the
+  `.chrome/` profile, logs, and lock / `node_modules` files are all gitignored so
+  secrets can never be pushed.
 
 ---
 
@@ -373,11 +499,14 @@ It is safe on a memory-constrained host and has no effect while you are only usi
 # Status of the whole stack
 systemctl status 'nexdesk-*'
 
-# Restart one piece (e.g. the gateway after a config change)
+# Restart one piece (for example the gateway after a config change)
 sudo systemctl restart nexdesk-gateway
 
-# Follow logs
+# Follow the gateway logs
 journalctl -u nexdesk-gateway -f
+
+# Admin menu: connection info, status and day-to-day actions
+sudo nexdesk
 ```
 
 ---
@@ -388,3 +517,14 @@ journalctl -u nexdesk-gateway -f
 - [ ] Download forwarding from the remote to the visitor's machine
 - [ ] Automatic HTTPS (Caddy / Traefik) documentation
 - [ ] Docker Compose packaging for ephemeral setups
+
+---
+
+## License
+
+An explicit license file has not been added to this repository yet. Until one is
+added, assume the standard all-rights-reserved copyright and contact the
+maintainer for reuse terms.
+
+NexDesk is an independent project and is not affiliated with, endorsed by, or
+trademarked by Google, the Chromium project, or the noVNC project.
