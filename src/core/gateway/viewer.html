@@ -559,7 +559,7 @@
   function loadRFB(){
     if(RFB) return Promise.resolve(RFB);
     if(!rfbLoading){
-      rfbLoading = importFirst(['./novnc/v__NOVNC_KEY__/core/rfb.js', './novnc/core/rfb.js'])
+      rfbLoading = importFirst(['/' + webpath + '/novnc/v__NOVNC_KEY__/core/rfb.js', '/' + webpath + '/novnc/core/rfb.js'])
         .then((m) => {
           RFB = m.default;
           try{ sessionStorage.removeItem('nexdesk_novnc_retry'); }catch(e){}
@@ -585,6 +585,9 @@
         errBox = $('errBox'), screen = $('screen');
 
   const webpath = location.pathname.split('/').filter(Boolean)[0] || '';
+  // Root-relative links can't be written statically because the page may
+  // load at /<secret> with no trailing slash. Rewrite them under webpath.
+  for(const a of document.querySelectorAll('a[href="logout"]')) a.href = '/' + webpath + '/logout';
   // Build the WebSocket endpoint under the same secret path.
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const wsUrl = `${proto}://${location.host}/${webpath}/vnc`;
