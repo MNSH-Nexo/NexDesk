@@ -1442,7 +1442,8 @@
   let audioOn = true;
   try{ audioOn = (localStorage.getItem('nexdesk_audio') || 'on') === 'on'; }catch(e){}
   let actx = null, audioWs = null, aNode = null, ringCap = 0, ring = null,
-      ringTail = 0, ringCount = 0, aCfg = null, aTimer = null, audioWsGen = 0;
+      ringTail = 0, ringCount = 0, aCfg = null, aTimer = null, audioWsGen = 0,
+      aUseWorklet = false, aBlobUrl = null;
   function renderSoundBtn(){
     btnSound.classList.toggle('snd-on', audioOn);
     btnSound.classList.toggle('snd-off', !audioOn);
@@ -1462,10 +1463,19 @@
     if(audioWs){ try{ audioWs.onclose = null; audioWs.close(); }catch(e){} audioWs = null; }
     if(aNode){ try{ aNode.disconnect(); }catch(e){} aNode = null; }
     if(actx){ try{ if(actx.state !== 'closed') actx.close(); }catch(e){} actx = null; }
-    ring = null; ringCount = 0; ringCap = 0; aCfg = null;
+    ring = null; ringCount = 0; ringCap = 0; aCfg = null; aUseWorklet = false;
   }
   function pushPCM(buf){
-    if(!aCfg || !ring) return;
+    if(!aCfg) return;
+    if(aUseWorklet && aNode && aNode.port){
+      const ch = aCfg.channels || 1;
+      const frames = Math.floor(buf.byteLength / 2 / ch);
+      if(frames <= 0) return;
+      try{ aNode.port.postMessage({ type:'pcm', buf: buf, ch: ch }, [ buf ]); }catch(e){}
+      if(actx && actx.state === 'suspended'){ try{ actx.resume(); }catch(e){} }
+      return;
+    }
+    if(!ring) return;
     const i16 = new Int16Array(buf);
     const ch = aCfg.channels || 1;
     const frames = Math.floor(i16.length / ch);
@@ -1479,7 +1489,26 @@
     }
     if(actx && actx.state === 'suspended'){ try{ actx.resume(); }catch(e){} }
   }
-  function setupNode(){
+  const WORKLET_SRC =
+    "class Nx extends AudioWorkletProcessor{" +
+    "constructor(){super();this.cap=0;this.r=null;this.t=0;this.n=0;this.ch=1;" +
+    "this.port.onmessage=e=>{const m=e.data;if(m&&m.type==='config'){this.ch=m.channels||1;this.cap=Math.max(1024,Math.ceil((m.rate||48000)*5));this.r=new Float32Array(this.cap);this.t=0;this.n=0;}" +
+    "else if(m&&m.type==='pcm'){this.put(m.buf,m.ch);}};}" +
+    "put(b,ch){if(!this.r){this.ch=ch||1;this.cap=Math.max(1024,Math.ceil(48000*5));this.r=new Float32Array(this.cap);this.t=0;this.n=0;}" +
+    "const i=new Int16Array(b);const cc=ch||this.ch;const fr=Math.floor(i.length/cc);" +
+    "for(let k=0;k<fr;k++){let s=0;for(let c=0;c<cc;c++)s+=i[k*cc+c];const v=(s/cc)/32768;this.r[this.t]=v;this.t=(this.t+1)%this.cap;if(this.n<this.cap)this.n++;else this.t=(this.t+this.cap-1)%this.cap;}}" +
+    "process(o){const ch0=o[0];if(!ch0)return true;const need=ch0.length;const av=Math.min(need,this.n);" +
+    "for(let i=0;i<av;i++)ch0[i]=this.r[(this.t+i)%this.cap];for(let i=av;i<need;i++)ch0[i]=0;" +
+    "this.t=(this.t+av)%this.cap;this.n-=av;if(this.n<0)this.n=0;return true;}}" +
+    "registerProcessor('nx',Nx);";
+  function workletUrl(){
+    if(aBlobUrl) return aBlobUrl;
+    try{ aBlobUrl = URL.createObjectURL(new Blob([WORKLET_SRC], { type:'application/javascript' })); }catch(e){ aBlobUrl = null; }
+    return aBlobUrl;
+  }
+  function setupLegacy(){
+    // Fallback ScriptProcessor (runs on the main thread). Only used when the
+    // browser offers no AudioWorklet support.
     if(!actx || !aCfg || aNode) return;
     ringCap = Math.max(1024, Math.ceil(aCfg.rate * 5)); // ~5s buffer
     ring = new Float32Array(ringCap); ringTail = 0; ringCount = 0;
@@ -1496,6 +1525,28 @@
       };
       aNode.connect(actx.destination);
     }catch(e){ aNode = null; }
+  }
+  function setupWorklet(){
+    // Preferred path: playback runs on the audio thread (AudioWorklet), so
+    // heavy VNC rendering on the main thread can no longer starve it.
+    if(!actx || !aCfg || !window.AudioWorkletNode || !actx.audioWorklet) return false;
+    const url = workletUrl();
+    if(!url) return false;
+    actx.audioWorklet.addModule(url).then(() => {
+      if(!actx || !aCfg || aNode) return;
+      try{
+        const n = new AudioWorkletNode(actx, 'nx');
+        n.port.postMessage({ type:'config', rate: aCfg.rate, channels: aCfg.channels });
+        n.connect(actx.destination);
+        aNode = n; aUseWorklet = true;
+      }catch(e){ aUseWorklet = false; aNode = null; setupLegacy(); }
+    }).catch(() => { if(!aUseWorklet && !aNode) setupLegacy(); });
+    return true;
+  }
+  function setupNode(){
+    if(!actx || !aCfg || aNode) return;
+    if(setupWorklet()) return;  // async, registers itself when ready
+    setupLegacy();
   }
   function scheduleAudioReconnect(){
     if(!audioOn) return;
