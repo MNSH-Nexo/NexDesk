@@ -55,6 +55,10 @@ machine and **survives restarts**, so it works like a real desktop you can reach
 - **Self-healing connection** — if the link drops or the session is closed (even by a momentary
   internet blip), the viewer **reconnects automatically** with a growing back-off and keeps
   retrying on its own; no manual `Retry` needed in normal cases.
+- **Stale-cache-proof viewer** — if a browser keeps an old cached copy of the viewer page that
+  points at an outdated noVNC asset path (which happens after NexDesk updates), the page
+  detects it and **silently reloads itself once** with a fresh copy — visitors never need to
+  clear their cache to connect again.
 - **Robust bridge** — the gateway fully tears down every dead/half-open session (its own ping
   watchdog drops unresponsive clients and every exit path frees the VNC socket), so a dropped
   visitor can never wedge the single x11vnc connection and block the next viewer.

@@ -537,9 +537,36 @@
   // path that served this page (derived from location), so no URL is hardcoded.
 
   // The noVNC assets are fetched under a cache-busting key stamped into this
-  // page by the gateway (__NOVNC_KEY__). Any key is served by the server, so a
-  // previously cached copy of this page can never request a file that 404s.
-  import RFB from './novnc/v__NOVNC_KEY__/core/rfb.js';
+  // page by the gateway (v__NOVNC_KEY__). If a previously cached copy of this
+  // page still points at an older key whose assets are gone (404), the import
+  // below fails and we silently reload through a fresh URL so the server hands
+  // back the current page with the current key. Normal users never see this —
+  // it is a one-time silent refresh that removes the need to clear the cache.
+  let RFB = null;
+  let rfbLoading = null;
+  function loadRFB(){
+    if(RFB) return Promise.resolve(RFB);
+    if(!rfbLoading){
+      rfbLoading = import('./novnc/v__NOVNC_KEY__/core/rfb.js')
+        .then((m) => {
+          RFB = m.default;
+          try{ sessionStorage.removeItem('nexdesk_novnc_retry'); }catch(e){}
+          return RFB;
+        })
+        .catch((err) => {
+          rfbLoading = null;
+          try{
+            if(!sessionStorage.getItem('nexdesk_novnc_retry')){
+              sessionStorage.setItem('nexdesk_novnc_retry', '1');
+              location.replace(location.pathname + location.search + '?v=' + Date.now());
+              return Promise.reject(err);
+            }
+          }catch(e){}
+          return Promise.reject(err);
+        });
+    }
+    return rfbLoading;
+  }
 
   const $ = (id) => document.getElementById(id);
   const dot = $('dot'), statusEl = $('status'), overlay = $('overlay'),
@@ -712,6 +739,14 @@
   // manual=true clears the backoff counter (fresh attempt from a button);
   // manual=false is used by the automatic reconnector so backoff keeps growing.
   function connect(manual){
+    if(!RFB){
+      // Engine not loaded yet (fresh page, or a stale cached copy retried
+      // through loadRFB's silent reload) — load it, then connect.
+      loadRFB().then(() => connect(manual)).catch(() => {
+        showError('Viewer engine failed to load — please refresh the page.');
+      });
+      return;
+    }
     clearRetry();
     if(manual !== false) retryCount = 0;
     errBox.style.display = 'none';
@@ -1004,6 +1039,14 @@
   // nudge it so Fit (scaleViewport) follows the new container size.
   window.addEventListener('resize', () => { if(rfb){ rfb.scaleViewport = fitMode; } if(IS_TOUCH) vkSyncHeight(); applyLand(); });
   window.addEventListener('orientationchange', () => setTimeout(()=> { if(rfb){ rfb.scaleViewport = fitMode; } if(IS_TOUCH){ vkSyncHeight(); vkMaybeAutoOpen(); } applyLand(); }, 300));
+  // If the browser restores this page from its back/forward cache after a
+  // deploy, the restored copy may reference stale noVNC assets — reload once
+  // so it always matches the current server state.
+  window.addEventListener('pageshow', (ev) => {
+    if(ev.persisted && !connected && !rfb){
+      try{ location.reload(); }catch(e){}
+    }
+  });
 
   // ----- resource meter (host CPU / RAM) -----
   const cpuFill = $('cpuFill'), cpuVal = $('cpuVal');
