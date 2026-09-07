@@ -575,6 +575,26 @@ fi
 info "Writing systemd service units..."
 BROWSER_OPTS="--disable-gpu --disable-dev-shm-usage --disable-software-rasterizer --no-first-run --no-default-browser-check --force-device-scale-factor=1 --remote-debugging-port=9223 --remote-debugging-address=127.0.0.1 --remote-allow-origins=*"
 
+# What the virtual browser opens when it starts (the "empty" tab). Instead of a
+# blank about:blank we ship a self-contained branded NexDesk page under the
+# gateway assets so a freshly opened window shows the brand, not an empty tab.
+# Override for your own start/home page with NX_BROWSER_HOME=<url>.
+BROWSER_HOME="file://${NX_DIR}/src/core/gateway/welcome.html"
+[[ -z "${NX_BROWSER_HOME:-}" ]] || BROWSER_HOME="$NX_BROWSER_HOME"
+
+# Legacy installs (before the resolution + start URL moved into the main unit)
+# left a screen.conf drop-in that re-defines the browser ExecStart, almost always
+# ending in about:blank. That override would hide both the tuned window size and
+# the branded home page on an existing server, so drop any drop-in that tries to
+# re-supply ExecStart (memory/other tuning drop-ins are left untouched).
+for _dx in /etc/systemd/system/nexdesk-browser.service.d/*.conf; do
+  [ -e "$_dx" ] || continue
+  if grep -qE '^[[:space:]]*ExecStart=' "$_dx" 2>/dev/null; then
+    warn "Removing legacy browser ExecStart override: $_dx"
+    rm -f "$_dx"
+  fi
+done
+
 # Window fit helper — Xvfb has no window manager, so Chrome's window can end up
 # smaller than the display (older Chrome versions / saved profile bounds),
 # leaving a black strip on the right of the screen. It runs after the browser
@@ -656,7 +676,7 @@ User=${NX_USER}
 Environment=DISPLAY=:${DISPLAY_NUM}
 Environment=PULSE_SERVER=unix:/run/nexdesk-audio/pulse/native
 Environment=PULSE_RUNTIME_PATH=/run/nexdesk-audio/pulse
-ExecStart=${BROWSER_BIN} --user-data-dir=${NX_DIR}/.chrome --window-size=${BROWSER_RES} --window-position=0,0 ${BROWSER_OPTS} about:blank
+ExecStart=${BROWSER_BIN} --user-data-dir=${NX_DIR}/.chrome --window-size=${BROWSER_RES} --window-position=0,0 ${BROWSER_OPTS} "${BROWSER_HOME}"
 ExecStartPost=${NX_DIR}/bin/fit-window.sh
 Restart=always
 RestartSec=3

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NexDesk · Virtual Browser</title>
+<style>
+  :root{
+    --bg:#07070d;
+    --panel:rgba(17,17,30,.62);
+    --line:rgba(255,255,255,.07);
+    --ink:#eef0ff;
+    --ink-dim:#9aa0c4;
+    --ink-faint:#5b6085;
+    --brand:#7c5cff;
+    --brand2:#39d0ff;
+    --ok:#3ecf8e;
+    --radius:20px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,"Noto Sans",sans-serif;
+    color:var(--ink);
+    background:var(--bg);
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  /* ambient aurora blobs */
+  .aurora{position:fixed;inset:0;overflow:hidden;pointer-events:none;z-index:0}
+  .aurora i{position:absolute;border-radius:50%;filter:blur(90px);opacity:.5;will-change:transform}
+  .a1{width:55vmax;height:55vmax;left:-14vmax;top:-16vmax;background:radial-gradient(circle at 30% 30%,rgba(124,92,255,.55),transparent 62%);animation:drift 26s ease-in-out infinite}
+  .a2{width:48vmax;height:48vmax;right:-12vmax;bottom:-14vmax;background:radial-gradient(circle at 60% 60%,rgba(57,208,255,.4),transparent 60%);animation:drift2 30s ease-in-out infinite}
+  .a3{width:34vmax;height:34vmax;left:38vw;top:30vh;background:radial-gradient(circle,rgba(255,90,160,.14),transparent 64%);animation:drift3 22s ease-in-out infinite}
+  @keyframes drift{0%,100%{transform:translate3d(0,0,0) scale(1)}50%{transform:translate3d(4vmax,3vmax,0) scale(1.08)}}
+  @keyframes drift2{0%,100%{transform:translate3d(0,0,0) scale(1)}50%{transform:translate3d(-3vmax,-4vmax,0) scale(1.06)}}
+  @keyframes drift3{0%,100%{transform:translate3d(0,0,0)}50%{transform:translate3d(2vmax,-2vmax,0)}}
+  /* faint dot grid overlay */
+  .grid{position:fixed;inset:0;z-index:0;pointer-events:none;
+    background-image:radial-gradient(rgba(255,255,255,.045) 1px,transparent 1px);
+    background-size:34px 34px;
+    -webkit-mask-image:radial-gradient(circle at 50% 42%,#000 0%,transparent 70%);
+            mask-image:radial-gradient(circle at 50% 42%,#000 0%,transparent 70%)}
+
+  .wrap{position:relative;z-index:1;height:100%;display:flex;flex-direction:column;align-items:center;
+        justify-content:center;padding:32px 20px;text-align:center}
+  .card{max-width:720px;width:100%}
+
+  .mark{width:84px;height:84px;margin:0 auto 22px;position:relative}
+  .mark svg{width:100%;height:100%;display:block;filter:drop-shadow(0 10px 34px rgba(124,92,255,.45))}
+  .halo{position:absolute;inset:-26px;border-radius:50%;
+        background:radial-gradient(circle,rgba(124,92,255,.28),transparent 68%);
+        animation:pulse 4.5s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:.55;transform:scale(1)}50%{opacity:1;transform:scale(1.07)}}
+
+  .brand{font-size:clamp(38px,8vw,56px);font-weight:800;letter-spacing:-.5px;line-height:1}
+  .brand span.grad{
+    background:linear-gradient(92deg,#b7a6ff 0%,#8f74ff 40%,#39d0ff 100%);
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .tag{color:var(--ink-dim);font-size:clamp(15px,2.6vw,18px);margin:16px auto 0;
+       line-height:1.6;max-width:560px}
+
+  .hint{display:inline-flex;align-items:center;gap:10px;margin:30px auto 0;
+        padding:11px 18px;border-radius:999px;background:var(--panel);
+        border:1px solid var(--line);backdrop-filter:blur(10px);
+        color:var(--ink-dim);font-size:14px}
+  .hint kbd{font-family:inherit;padding:2px 9px;border-radius:7px;background:rgba(255,255,255,.07);
+            border:1px solid var(--line);border-bottom-width:2px;color:var(--ink);font-size:12px}
+
+  .feats{display:flex;gap:12px;justify-content:center;margin-top:40px;flex-wrap:wrap}
+  .feat{display:flex;align-items:center;gap:10px;padding:11px 16px;border-radius:14px;
+        background:var(--panel);border:1px solid var(--line);
+        color:var(--ink-dim);font-size:13.5px;backdrop-filter:blur(10px);
+        transition:transform .2s ease,border-color .2s ease,color .2s ease}
+  .feat:hover{transform:translateY(-2px);border-color:rgba(124,92,255,.5);color:var(--ink)}
+  .feat svg{width:17px;height:17px;flex:none}
+
+  .foot{position:absolute;bottom:20px;left:0;right:0;text-align:center;
+        color:var(--ink-faint);font-size:12px;letter-spacing:.3px;z-index:1}
+  .foot b{color:var(--ink-dim);font-weight:600}
+
+  @media (max-width:480px){ .feat{font-size:12px} .feats{gap:8px} }
+  @media (prefers-reduced-motion:reduce){
+    .aurora i,.halo{animation:none}
+  }
+</style>
+</head>
+<body>
+  <div class="aurora" aria-hidden="true"><i class="a1"></i><i class="a2"></i><i class="a3"></i></div>
+  <div class="grid" aria-hidden="true"></div>
+
+  <main class="wrap">
+    <div class="card">
+      <div class="mark">
+        <div class="halo" aria-hidden="true"></div>
+        <svg viewBox="0 0 48 48" role="img" aria-label="NexDesk">
+          <defs>
+            <linearGradient id="mg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#9d84ff"/>
+              <stop offset=".55" stop-color="#7c5cff"/>
+              <stop offset="1" stop-color="#3ea8ff"/>
+            </linearGradient>
+          </defs>
+          <rect width="48" height="48" rx="14" fill="url(#mg)"/>
+          <rect x="1" y="1" width="46" height="46" rx="13" fill="none" stroke="#fff" stroke-opacity=".18" stroke-width="1.2"/>
+          <path d="M15 34 L15 14 L33 34 L33 14" fill="none" stroke="#fff" stroke-width="4.4"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+
+      <h1 class="brand"><span class="grad">NexDesk</span></h1>
+      <p class="tag">Your private cloud browser. Always on, always yours —<br>
+        it lives on your own server, not someone else’s.</p>
+
+      <div class="hint">
+        <span>Type an address in the bar above or open a link to start</span>
+      </div>
+
+      <div class="feats">
+        <div class="feat">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#3ecf8e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+          <span>Private</span>
+        </div>
+        <div class="feat">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#7c5cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 4v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V7z"/><path d="M9 12l2 2 4-4"/></svg>
+          <span>Secure</span>
+        </div>
+        <div class="feat">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#39d0ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h6l-1 8 9-12h-6z"/></svg>
+          <span>Instant</span>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="foot"><b>NexDesk</b> &nbsp;·&nbsp; virtual browser</footer>
+</body>
+</html>

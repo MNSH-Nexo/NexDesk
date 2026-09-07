@@ -12,7 +12,7 @@ CHROME_BIN="${NEXDESK_CHROME:-/usr/bin/google-chrome}"
 PROFILE="${NEXDESK_PROFILE:-/opt/nexdesk/.chrome}"
 RES_X="${NEXDESK_RES_X:-1440}"
 RES_Y="${NEXDESK_RES_Y:-900}"
-START_URL="${NEXDESK_START_URL:-about:blank}"
+START_URL="${NEXDESK_START_URL:-file:///opt/nexdesk/src/core/gateway/welcome.html}"
 
 # Sanitise/seed the profile's language so Chrome does not pick the server
 # region's locale (e.g. Arabic). We only touch the 'intl' keys we own.
