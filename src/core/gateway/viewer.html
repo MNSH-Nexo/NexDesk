@@ -1607,9 +1607,19 @@ registerProcessor('nx', Nx);
         }catch(e){}
       } else { pushPCM(ev.data); }
     };
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       if(audioWs === ws) audioWs = null;            // this socket is gone
-      if(gen === audioWsGen) scheduleAudioReconnect(); // but only reconnect if still the current one
+      // The gateway closes a socket with reason 'dup' when ANOTHER live socket
+      // already owns this remote's audio (a second tab/window on the same IP).
+      // We must NOT auto-reconnect in that case: two sockets would fight each
+      // other and keep killing the live stream (the no-sound / cut flip-flop).
+      // Going quiet lets the newest session (the one you just opened) hold the
+      // audio cleanly instead.
+      if(gen === audioWsGen){
+        const why = (ev && ev.reason) || '';
+        if(why === 'dup'){ stopAudio('dup'); }
+        else { scheduleAudioReconnect(); }
+      }
     };
     ws.onerror = () => { try{ ws.close(); }catch(e){} };
   }
