@@ -692,6 +692,12 @@ const BR_TELE_MS    = parseInt(process.env.BR_TELE_MS || '1000', 10);  // link.l
 const AUDIO_SILENCE_THRESHOLD = parseInt(process.env.AUDIO_SILENCE || '8', 10);  // int16 amplitude
 const AUDIO_TAIL_CHUNKS = parseInt(process.env.AUDIO_TAIL_CHUNKS || '3', 10);    // silence chunks kept after sound
 const AUDIO_SEND_HWM = parseInt(process.env.AUDIO_SEND_HWM || '256', 10) * 1024; // max queued bytes before dropping
+
+// Only one live audio stream per remote address. A single viewer can otherwise
+// transiently open two /audio sockets (a reconnect race on a weak link), and
+// both captures then feed the same playback buffer -- heard as doubled and
+// overlapping sound. Newest connection wins; the older one is closed.
+const audioStreams = new Map(); // ip -> ws
 const audioRuntime = (function () {
   try { fs.mkdirSync(AUDIO_RUNTIME_DIR, { recursive: true }); } catch (e) {}
   return AUDIO_RUNTIME_DIR;
@@ -738,8 +744,15 @@ function handleAudioUpgrade(req, socket, head, ip){
     LFILE.audio('OPEN rate=' + rate + ' ch=' + channels + ' from ' + ip);
     L.info('audio stream open', ip, rate + 'Hz/' + channels + 'ch');
     ws.send(JSON.stringify({ type: 'config', rate, channels, format: 's16le' }), () => {});
+
+  // If this viewer already has a live capture (reconnect race), close the old
+  // one so only a single stream feeds the playback buffer (no doubled/mixed sound).
+  const prev = audioStreams.get(ip);
+  if (prev && prev !== ws){ try { prev._nxaudioStop('dup'); } catch (e) {} }
+  audioStreams.set(ip, ws);
     function stop(why){
       if (closed) return; closed = true;
+      if (audioStreams.get(ip) === ws) audioStreams.delete(ip);
       const dur = ((Date.now() - started) / 1000).toFixed(1);
       if (child) { try { child.kill('SIGTERM'); } catch (e) {} }
       const kb = (loudBytes + silentBytes) / 1024;
