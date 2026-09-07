@@ -397,7 +397,11 @@ maybe_swap
 # ---------------------------------------------------------------------------
 info "Updating package index and installing core dependencies..."
 apt_try update -qq
-apt_try install -y -qq xvfb x11vnc novnc websockify xdotool curl openssl xauth >/dev/null \
+# xclip (and its xsel fallback) own the X CLIPBOARD selection so the on-screen
+# keyboard's Persian/non-Latin typing (copy to clipboard, then Ctrl+V) works on
+# every host. The gateway falls back to xsel when xclip is absent, and to its
+# DevTools bridge when neither exists — installing both here removes that gap.
+apt_try install -y -qq xvfb x11vnc novnc websockify xdotool xclip xsel curl openssl xauth >/dev/null \
   || die "Core packages failed to install. See $LOG_FILE (or run apt-get update manually) and rerun."
 ok "Core packages installed."
 
