@@ -1505,7 +1505,7 @@
     el.id = 'audioUnlockChip';
     el.setAttribute('role','button'); el.setAttribute('tabindex','0');
     el.textContent = 'Enable sound';
-    el.style.cssText = 'position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:2147483000;padding:12px 18px;background:#1a73e8;color:#fff;border:none;border-radius:999px;font:600 14px/1.2 sans-serif;cursor:pointer;box-shadow:0 4px 18px rgba(0,0,0,.35);user-select:none;';
+    el.style.cssText = 'position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:2147483000;padding:14px 22px;background:#1a73e8;color:#fff;border:none;border-radius:12px;font:700 15px/1.2 sans-serif;cursor:pointer;box-shadow:0 6px 24px rgba(0,0,0,.45);user-select:none;animation:pulse 1.2s infinite;';
     el.addEventListener('click', (ev) => {
       ev.stopPropagation();
       try{ ensureCtx(); if(actx && actx.state === 'suspended'){ actx.resume(); } }catch(e){}
@@ -1665,12 +1665,25 @@ registerProcessor('nx', Nx);
   // Autoplay policies need a real user gesture, so start (or resume) on first
   // interaction if sound is enabled, and refresh a live stream when the tab is
   // hidden and brought back.
-  window.addEventListener('pointerdown', () => { if(audioOn && actx && actx.state === 'suspended'){ try{ actx.resume(); }catch(e){} } });
-  window.addEventListener('pointerdown', () => { if(audioOn && !audioWs) startAudio(); });
+  // Unlock sound on the FIRST real user gesture (any click/tap/key/drag). The
+  // auto resume() calls elsewhere can be denied before a gesture, but a resume
+  // made *inside* this handler runs under user activation and succeeds, turning
+  // a load-time-suspended AudioContext audible on autoplay-blocked origins.
+  let soundUnlocked = false;
+  function unlockSound(ev){
+    if(!audioOn) return;
+    soundUnlocked = true;
+    try{ if(actx && actx.state === 'suspended'){ actx.resume(); } }catch(e){}
+    try{ if(audioOn && !audioWs && connected){ startAudio(); } }catch(e){}
+  }
+  ['pointerdown','mousedown','touchstart','pointerup','keydown','keyup'].forEach((evt) =>
+    window.addEventListener(evt, unlockSound, { capture: true, passive: true }));
   document.addEventListener('visibilitychange', () => {
     if(document.visibilityState === 'visible' && audioOn && !audioWs && connected){ startAudio(); }
-    if(document.visibilityState === 'hidden'){ /* stream continues */ }
   });
+  // Make the floating chip unmistakable and catch Enter/Space/click on it too.
+  const chipTap = () => { unlockSound(); const c = document.getElementById('audioUnlockChip'); if(c) c.remove(); };
+  document.addEventListener('pointerdown', (e) => { if(e.target && e.target.id === 'audioUnlockChip'){ chipTap(); } });
   if(audioOn) startAudio();
 
   // ==========================================================================
