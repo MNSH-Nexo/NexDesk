@@ -798,8 +798,17 @@ function handleAudioUpgrade(req, socket, head, ip){
       if (closed) return clearInterval(hb);
       LFILE.audio('heartbeat from ' + ip + ' loudKB=' + Math.round(loudBytes/1024) + ' silentKB=' + Math.round(silentBytes/1024) + ' chunks=' + chunks);
     }, 30000).unref();
+    // Keep the stream out of idle timeout: silence suppression stops real
+    // traffic while the desktop is quiet, so an idle NAT/proxy would otherwise
+    // drop the socket after ~120 s of silence (the periodic cut-and-reconnect
+    // users hear). A lightweight WS control ping every 10 s keeps the path
+    // alive with negligible cost and does not touch the audio clock.
+    const ka = setInterval(() => {
+      if (closed) return clearInterval(ka);
+      if (ws.readyState === WebSocket.OPEN){ try { ws.ping(); } catch (e) {} }
+    }, 10000).unref();
     ws._nxaudioStop = stop;
-    ws.on('close', () => { try { clearInterval(hb); } catch (e) {} });
+    ws.on('close', () => { try { clearInterval(hb); } catch (e) {} try { clearInterval(ka); } catch (e) {} });
   });
 }
 

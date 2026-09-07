@@ -1500,7 +1500,7 @@
   function scheduleAudioReconnect(){
     if(!audioOn) return;
     if(aTimer || !connected || document.visibilityState === 'hidden') return;
-    aTimer = setTimeout(() => { aTimer = null; startAudio(); }, 1500);
+    aTimer = setTimeout(() => { aTimer = null; startAudio(); }, 1000);
   }
   function startAudio(){
     if(!audioOn) return;
