@@ -1442,8 +1442,7 @@
   let audioOn = true;
   try{ audioOn = (localStorage.getItem('nexdesk_audio') || 'on') === 'on'; }catch(e){}
   let actx = null, audioWs = null, aNode = null, ringCap = 0, ring = null,
-      ringWrite = 0, ringRead = 0, ringCount = 0, aCfg = null, aTimer = null, audioWsGen = 0,
-      aUseWorklet = false, aBlobUrl = null;
+      ringWrite = 0, ringRead = 0, ringCount = 0, aCfg = null, aTimer = null, audioWsGen = 0;
   function renderSoundBtn(){
     btnSound.classList.toggle('snd-on', audioOn);
     btnSound.classList.toggle('snd-off', !audioOn);
@@ -1463,18 +1462,10 @@
     if(audioWs){ try{ audioWs.onclose = null; audioWs.close(); }catch(e){} audioWs = null; }
     if(aNode){ try{ aNode.disconnect(); }catch(e){} aNode = null; }
     if(actx){ try{ if(actx.state !== 'closed') actx.close(); }catch(e){} actx = null; }
-    ring = null; ringWrite = 0; ringRead = 0; ringCount = 0; ringCap = 0; aCfg = null; aUseWorklet = false;
+    ring = null; ringWrite = 0; ringRead = 0; ringCount = 0; ringCap = 0; aCfg = null;
   }
   function pushPCM(buf){
-    if(!aCfg) return;
-    if(aUseWorklet && aNode && aNode.port){
-      const ch = aCfg.channels || 1;
-      const frames = Math.floor(buf.byteLength / 2 / ch);
-      if(frames <= 0) return;
-      try{ aNode.port.postMessage({ type:'pcm', buf: buf, ch: ch }, [ buf ]); }catch(e){}
-      return;
-    }
-    if(!ring) return;
+    if(!aCfg || !ring) return;
     const i16 = new Int16Array(buf);
     const ch = aCfg.channels || 1;
     const frames = Math.floor(i16.length / ch);
@@ -1488,61 +1479,30 @@
       else ringRead = (ringRead + 1) % ringCap;   // full -> overwrite oldest
     }
   }
-  // Chrome only lets a low-MEI secure origin (fresh raw-IP HTTPS) start sound
+  // Chrome only lets a low-MEI secure origin (a fresh raw-IP HTTPS) start sound
   // inside a REAL user gesture. The top-bar speaker button and the first
-  // click/tap/key call this, so it always runs under user activation -- the one
-  // resume() the browser honours (creating the context here also starts it
-  // running). No floating chip is needed; the top bar already has a sound toggle.
+  // click/tap/key call this, so it always runs under user activation. No
+  // floating chip is needed; the top bar already has a sound toggle.
   function activateAudioOnGesture(){
     if(!audioOn) return;
-    if(!audioWs && connected){ startAudio(); }
+    const running = !!(actx && actx.state === 'running');
+    if(running && audioWs) return;                 // already audible — nothing to do
+    if(!connected){ ensureCtx(); try{ if(actx) actx.resume(); }catch(e){} return; }
+    // A context created at load on a low-MEI HTTPS origin is 'suspended', and
+    // Chrome can silently refuse to resume() that one even inside a gesture. The
+    // reliable unlock is to tear it down and create a fresh context *inside this
+    // very gesture* — such a context starts 'running', so the stream becomes
+    // audible on the first click/tap/key.
+    if(actx && actx.state === 'suspended'){ stopAudio('unlock-gesture'); }
     ensureCtx();
     if(actx && actx.state === 'suspended'){ try{ actx.resume(); }catch(e){} }
-  }
-
-  const WORKLET_SRC = `
-class Nx extends AudioWorkletProcessor {
-  constructor(){
-    super();
-    // Plain FIFO with separate write & read heads. cap ~2 s bounds latency and
-    // prevents the stream from lagging; overflow drops the oldest samples.
-    this.cap=0; this.r=null; this.w=0; this.rd=0; this.n=0; this.ch=1;
-    this.port.onmessage=(e)=>{ const m=e.data;
-      if(m && m.type==='config'){
-        this.ch=m.channels||1; const R=m.rate||48000;
-        this.cap=Math.max(2048, Math.ceil(R*2));
-        this.r=new Float32Array(this.cap); this.w=0; this.rd=0; this.n=0;
-      } else if(m && m.type==='pcm'){ this.put(m.buf,m.ch); }
-    };
-  }
-  put(b,ch){
-    if(!this.r){ this.ch=ch||1; this.cap=Math.ceil(96000*2); this.r=new Float32Array(this.cap); this.w=0; this.rd=0; this.n=0; }
-    const i=new Int16Array(b); const cc=ch||this.ch; const fr=Math.floor(i.length/cc);
-    const R=this.r, cap=this.cap;
-    for(let k=0;k<fr;k++){ let s=0; for(let c=0;c<cc;c++)s+=i[k*cc+c];
-      R[this.w]=(s/cc)/32768; this.w=(this.w+1)%cap;
-      if(this.n<cap) this.n++; else this.rd=(this.rd+1)%cap;
-    }
-  }
-  process(o){
-    const ch0=o[0]; if(!ch0) return true; const need=ch0.length;
-    if(!this.r || this.n<=0){ for(let i=0;i<need;i++)ch0[i]=0; return true; }
-    const R=this.r, cap=this.cap;
-    let i=0;
-    while(i<need && this.n>0){ ch0[i]=R[this.rd]; this.rd=(this.rd+1)%cap; this.n--; i++; }
-    for(;i<need;i++)ch0[i]=0;
-    return true;
-  }
-}
-registerProcessor('nx', Nx);
-`;  function workletUrl(){
-    if(aBlobUrl) return aBlobUrl;
-    try{ aBlobUrl = URL.createObjectURL(new Blob([WORKLET_SRC], { type:'application/javascript' })); }catch(e){ aBlobUrl = null; }
-    return aBlobUrl;
+    if(!audioWs){ startAudio(); }
   }
   function setupLegacy(){
-    // Fallback ScriptProcessor (runs on the main thread). Only used when the
-    // browser offers no AudioWorklet support.
+    // Playback runs on a ScriptProcessor ring-buffer node. An AudioWorklet was
+    // tried first, but on some Chrome builds its node stayed silent (its FIFO
+    // filled with real PCM while nothing reached the device); this plain node is
+    // proven audible on both http and https.
     if(!actx || !aCfg || aNode) return;
     ringCap = Math.max(1024, Math.ceil(aCfg.rate * 5)); // ~5s buffer
     ring = new Float32Array(ringCap); ringWrite = 0; ringRead = 0; ringCount = 0;
@@ -1558,38 +1518,7 @@ registerProcessor('nx', Nx);
       aNode.connect(actx.destination);
     }catch(e){ aNode = null; }
   }
-  function setupWorklet(){
-    // Preferred path: playback runs on the audio thread (AudioWorklet) so VNC
-    // rendering on the main thread cannot starve it. EVERY failure or hang here
-    // falls back to the proven main-thread path so audio is never silently lost.
-    if(!actx || !aCfg || !window.AudioWorkletNode || !actx.audioWorklet) return false;
-    const url = workletUrl();
-    if(!url) return false;
-    let timer = null;
-    const toLegacy = () => { timer = null; if(!aUseWorklet && !aNode) setupLegacy(); };
-    try{
-      actx.audioWorklet.addModule(url).then(() => {
-        if(timer){ clearTimeout(timer); timer = null; }
-        if(!actx || !aCfg || aNode) return;
-        try{
-          const n = new AudioWorkletNode(actx, 'nx');
-          n.port.postMessage({ type: 'config', rate: aCfg.rate, channels: aCfg.channels });
-          n.connect(actx.destination);
-          aNode = n; aUseWorklet = true;
-        }catch(e){ aUseWorklet = false; aNode = null; toLegacy(); }
-      }).catch(toLegacy);
-      // Safety net: if the worklet has not produced a working node within a
-      // second (addModule can stall behind a proxy/CSP), switch to the fallback
-      // path instead of staying silent.
-      timer = setTimeout(toLegacy, 1000);
-    }catch(e){ toLegacy(); }
-    return true;
-  }
-  function setupNode(){
-    if(!actx || !aCfg || aNode) return;
-    if(setupWorklet()) return;  // async: resolves to a worklet node OR legacy
-    setupLegacy();
-  }
+  function setupNode(){ if(!actx || !aCfg || aNode) return; setupLegacy(); }
 
   function scheduleAudioReconnect(){
     if(!audioOn) return;
@@ -1598,8 +1527,8 @@ registerProcessor('nx', Nx);
   }
   function startAudio(){
     if(!audioOn) return;
-    // Avoid piling up duplicate live streams on the gateway if startAudio is
-    // ever fired twice for the same viewer (that produced "cut/connect" churn).
+    // Avoid piling up duplicate live streams on the gateway if startAudio is ever
+    // fired twice for the same viewer (that produced cut/connect churn).
     if(audioWs && (audioWs.readyState === WebSocket.CONNECTING || audioWs.readyState === WebSocket.OPEN)) return;
     const ctx = ensureCtx();
     if(!ctx) return;
@@ -1623,9 +1552,8 @@ registerProcessor('nx', Nx);
       // The gateway closes a socket with reason 'dup' when ANOTHER live socket
       // already owns this remote's audio (a second tab/window on the same IP).
       // We must NOT auto-reconnect in that case: two sockets would fight each
-      // other and keep killing the live stream (the no-sound / cut flip-flop).
-      // Going quiet lets the newest session (the one you just opened) hold the
-      // audio cleanly instead.
+      // other and keep killing the live stream. Going quiet lets the newest
+      // session (the one you just opened) hold the audio cleanly.
       if(gen === audioWsGen){
         const why = (ev && ev.reason) || '';
         if(why === 'dup'){ stopAudio('dup'); }
@@ -1655,22 +1583,14 @@ registerProcessor('nx', Nx);
     // AudioContext is created/resumed 'running' and playback starts. When sound is
     // already marked ON but the browser hasn't granted playback yet (autoplay
     // blocked, e.g. a fresh raw-IP HTTPS origin), this click must ENABLE audio —
-    // NOT mute it. Otherwise audio defaults to on, its context stays suspended,
-    // and the top-bar speaker appears dead: every click just toggles it off.
+    // NOT mute it.
     if(audioOn && actx && actx.state === 'suspended'){ setAudio(true, true); }
     else { setAudio(!audioOn, true); }
     focusRemote();
   });
-  // Autoplay policies need a real user gesture, so start (or resume) on first
-  // interaction if sound is enabled, and refresh a live stream when the tab is
-  // hidden and brought back.
-  // Unlock sound on the FIRST real user gesture (any click/tap/key/drag). The
-  // auto resume() calls elsewhere can be denied before a gesture, but a resume
-  // made *inside* this handler runs under user activation and succeeds, turning
-  // a load-time-suspended AudioContext audible on autoplay-blocked origins.
-  // Unlock audio on the FIRST real user gesture (click/tap/key/drag). Instead of
-  // auto-resuming at load (which Chrome denies and logs), we resume/start inside
-  // this gesture handler so autoplay-blocked HTTPS origins become audible.
+  // A resume made *inside* this handler runs under user activation and succeeds,
+  // while one at load is denied on autoplay-blocked HTTPS origins. So unlock on
+  // the FIRST real user gesture (click/tap/key/drag) when sound is enabled.
   function unlockSound(){ if(audioOn) activateAudioOnGesture(); }
   ['pointerdown','mousedown','touchstart','pointerup','keydown','keyup'].forEach((evt) =>
     window.addEventListener(evt, unlockSound, { capture: true, passive: true }));
@@ -1680,6 +1600,7 @@ registerProcessor('nx', Nx);
   // Open the stream now. On allowed origins the context is already running and
   // sound flows immediately; on blocked ones the first gesture above resumes it.
   if(audioOn) startAudio();
+
 
 
   // ==========================================================================
