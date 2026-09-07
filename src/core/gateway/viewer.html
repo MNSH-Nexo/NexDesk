@@ -1494,20 +1494,16 @@ class Nx extends AudioWorkletProcessor {
   constructor(){
     super();
     this.cap=0; this.r=null; this.t=0; this.n=0; this.ch=1;
-    this.floor=0; this.ceil=0; this.live=false;
     this.port.onmessage=(e)=>{ const m=e.data;
       if(m && m.type==='config'){
         this.ch=m.channels||1; const R=m.rate||48000;
-        this.cap=Math.max(2048, Math.ceil(R*2));   // storage headroom (~2 s)
+        this.cap=Math.max(2048, Math.ceil(R*2));  // bounded storage (~2 s) so we never lag
         this.r=new Float32Array(this.cap); this.t=0; this.n=0;
-        this.floor=Math.round(R*0.15);             // ~150 ms pre-roll for smooth start
-        this.ceil=Math.round(R*0.7);               // shed backlog beyond ~700 ms (no "old" audio)
-        this.live=false;
       } else if(m && m.type==='pcm'){ this.put(m.buf,m.ch); }
     };
   }
   put(b,ch){
-    if(!this.r){ this.ch=ch||1; this.cap=Math.ceil(96000*2); this.r=new Float32Array(this.cap); this.t=0; this.n=0; this.floor=Math.round(48000*0.15); this.ceil=Math.round(48000*0.7); }
+    if(!this.r){ this.ch=ch||1; this.cap=Math.ceil(96000*2); this.r=new Float32Array(this.cap); this.t=0; this.n=0; }
     const i=new Int16Array(b); const cc=ch||this.ch; const fr=Math.floor(i.length/cc);
     for(let k=0;k<fr;k++){ let s=0; for(let c=0;c<cc;c++)s+=i[k*cc+c];
       this.r[this.t]=(s/cc)/32768; this.t=(this.t+1)%this.cap;
@@ -1515,10 +1511,8 @@ class Nx extends AudioWorkletProcessor {
   }
   process(o){
     const ch0=o[0]; if(!ch0) return true; const need=ch0.length;
+    if(this.n<=0){ for(let i=0;i<need;i++)ch0[i]=0; return true; }
     const R=this.r, cap=this.cap;
-    if(this.n>this.ceil){ const dr=this.n-this.ceil; this.t=(this.t+dr)%cap; this.n-=dr; }
-    if(this.n<=0){ this.live=false; for(let i=0;i<need;i++)ch0[i]=0; return true; }
-    if(!this.live){ if(this.n<this.floor){ for(let i=0;i<need;i++)ch0[i]=0; return true; } this.live=true; }
     const av=this.n<need?this.n:need;
     for(let i=0;i<av;i++)ch0[i]=R[(this.t+i)%cap];
     for(let i=av;i<need;i++)ch0[i]=0;
