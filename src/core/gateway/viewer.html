@@ -1473,25 +1473,25 @@
       ['123','tab','esc','space','enter']
     ],
     enSym: [
-      ['1','2','3','4','5','6','7','8','9','0'],
-      ['-','/',':',';','(',')','$','&','@','"'],
-      ['.',',','?','!',"'",'[',']','{','}','|'],
-      ['\\','#','%','^','*','+','=','<','>','bs'],
-      ['abc','tab','esc','space','enter']
+      ['@','#','$','%','^','&','*','(',')','-'],
+      ['_','=','+','[',']','{','}','|','\\','/'],
+      [';',':','"',"'",'<','>','?','!',',','.'],
+      ['~','`','€','£','¥','¢','±','×','÷'],
+      ['abc','tab','esc','bs','space','enter']
     ],
     fa: [
       ['۱','۲','۳','۴','۵','۶','۷','۸','۹','۰'],
       ['ض','ص','ث','ق','ف','غ','ع','ه','خ','ح','ج','چ'],
       ['ش','س','ی','ب','ل','ا','ت','ن','م','ک','گ'],
       ['shift','ظ','ط','ز','ر','ذ','د','پ','و','bs'],
-      ['123','tab','esc','zwnj','space','enter']
+      ['123','tab','esc','space','enter']
     ],
     faSym: [
-      ['۱','۲','۳','۴','۵','۶','۷','۸','۹','۰'],
-      ['٬','٫','[',']','÷','×','٪','←','→','«'],
-      ['»','{','}','<','>','؟','؛','،','ء','ٔ'],
-      ['ـ','ّ','-','_','+','=','\\','|','/','bs'],
-      ['abc','tab','esc','space','enter']
+      ['@','#','$','٪','&','*','(',')','-','_'],
+      ['=','+','[',']','{','}','|','\\','/','<'],
+      ['>','«','»','؟','؛','،','٬','٫','÷','×'],
+      ['ء','أ','إ','آ','ؤ','ئ','ة','ٔ','ـ'],
+      ['abc','tab','esc','bs','space','enter']
     ]
   };
   const VK_SPECIAL = {
@@ -1500,8 +1500,7 @@
     space: { sym: 0x20,   code: 'Space',     cls: 'space fn', label: 'space' },
     enter: { sym: 0xFF0D, code: 'Enter',     cls: 'wide fn', label: '\u21B5' },
     tab:   { sym: 0xFF09, code: 'Tab',       cls: 'fn', label: 'tab' },
-    esc:   { sym: 0xFF1B, code: 'Escape',    cls: 'fn', label: 'esc' },
-    zwnj:  { sym: 0x200C, code: null,        cls: 'fn zwnj', label: '\u0646\u06CC\u0645\u200C\u0641\u0627\u0635\u0644\u0647' }
+    esc:   { sym: 0xFF1B, code: 'Escape',    cls: 'fn', label: 'esc' }
   };
   let vkLayer = 'alpha';               // 'alpha' | 'sym' (toggled by 123/ABC)
   function vkKeysym(ch){
@@ -1530,9 +1529,14 @@
     try{ rfb.sendKey(sp.sym, sp.code, true); rfb.sendKey(sp.sym, sp.code, false); }catch(e){}
   }
   // Type one character into the virtual desktop regardless of the remote
-  // keyboard layout: place it on the X clipboard via the gateway, then press
-  // Ctrl+V in the focused field. Requests are serialized so fast taps stay in
-  // order instead of racing each other's clipboard.
+  // keyboard layout. Preferred path: put the text on the X clipboard through
+  // the gateway, then press Ctrl+V in the focused field — that works in any
+  // focused window (web page, address bar, dialogs). Ctrl+V is only pressed
+  // after the gateway confirms the clipboard was actually set, so a missing
+  // clipboard tool can never paste stale/English text. When no clipboard tool
+  // exists, we fall back to the gateway's DevTools bridge, which inserts the
+  // character straight into the focused element of the page (layout- and
+  // clipboard-independent). Requests are serialized so fast taps stay ordered.
   let vkTypeChain = Promise.resolve();
   function vkTypeChar(ch){
     vkTypeChain = vkTypeChain.then(() => new Promise((resolve) => {
@@ -1546,19 +1550,17 @@
         } catch (e) {}
         setTimeout(resolve, 30);
       };
-      try {
-        const url = location.origin + '/' + webpath + '/clipboard';
-        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                     body: JSON.stringify({ text: ch }) })
-          .then((r) => { if (!r.ok) throw new Error('http ' + r.status); pressPaste(); })
-          .catch(() => {
-            try { rfb.clipboardPasteFrom(ch); } catch (e) {}
-            setTimeout(pressPaste, 220);
-          });
-      } catch (e) {
-        try { rfb.clipboardPasteFrom(ch); } catch (e2) {}
-        setTimeout(pressPaste, 220);
-      }
+      const post = (p, o) => fetch(location.origin + '/' + webpath + p,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(o) })
+        .then((r) => r.json().catch(() => ({ ok: false })));
+      post('/clipboard', { text: ch }).then((res) => {
+        if (res && res.ok) { pressPaste(); return; }
+        // Clipboard tool unavailable or endpoint down — never paste blind
+        // (that would insert whatever was last in the clipboard). Instead try
+        // inserting straight into the page via the gateway's CDP bridge.
+        return post('/ime', { text: ch }).then(() => { setTimeout(resolve, 30); })
+          .catch(() => { setTimeout(resolve, 30); });
+      }).catch(() => { setTimeout(resolve, 30); });
     }));
   }
   function vkPaintShift(){

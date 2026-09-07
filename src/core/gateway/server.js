@@ -327,6 +327,50 @@ router.post('/clipboard', (req, res) => {
   });
 });
 
+// ---- Text insertion via the Chromium DevTools bridge ----
+// Layout-independent fallback for the on-screen keyboard when the host has no
+// X-clipboard tool (xclip/xsel): insert the character straight into the focused
+// element of the active web page over the CDP link we already keep for uploads,
+// so Persian (and other non-Latin) text types correctly on every server without
+// extra packages. We reuse cdpJson/cdpCommand/cdp.pages defined below.
+async function imeInsertText(text){
+  const list = await cdpJson('/json/list');
+  if (!Array.isArray(list)) return { ok: false, error: 'cdp unreachable' };
+  let pick = null;
+  for (const t of list){
+    if (!t || t.type !== 'page' || !t.webSocketDebuggerUrl) continue;
+    const u = t.url || '';
+    if (!pick) pick = t;
+    if (u && !/^chrome:\/\//.test(u) && !/^about:/.test(u) && u !== 'about:blank'){ pick = t; break; }
+  }
+  if (!pick) return { ok: false, error: 'no page target' };
+  const rec = cdp.pages.get(pick.id);
+  if (rec && rec.ws && rec.ws.readyState === WebSocket.OPEN){
+    const r = await cdpCommand(rec, 'Input.insertText', { text }, 3000);
+    if (r && !r.error && !(r.result && r.result.exceptionDetails)) return { ok: true };
+    return { ok: false, error: (r && r.error && r.error.message) || 'insert rejected' };
+  }
+  // Target not in the long-lived set yet — open a short-lived socket.
+  return new Promise((resolve) => {
+    let ws;
+    try { ws = new WebSocket(pick.webSocketDebuggerUrl); } catch (e) { return resolve({ ok: false, error: 'ws fail' }); }
+    let done = false;
+    const to = setTimeout(() => { if (done) return; done = true; try { ws.close(); } catch (e) {} resolve({ ok: false, error: 'timeout' }); }, 3000);
+    ws.on('open', () => { try { ws.send(JSON.stringify({ id: 1, method: 'Input.insertText', params: { text } })); } catch (e) {} });
+    ws.on('message', (m) => { if (done) return; done = true; clearTimeout(to); try { ws.close(); } catch (e) {} try { const r = JSON.parse(String(m)); resolve({ ok: !r.error }); } catch (e) { resolve({ ok: false }); } });
+    ws.on('error', () => { if (done) return; done = true; clearTimeout(to); resolve({ ok: false, error: 'ws error' }); });
+  });
+}
+router.post('/ime', async (req, res) => {
+  if (!authed(req)) return res.status(401).end();
+  noStore(res);
+  const text = (req.body && typeof req.body.text === 'string') ? req.body.text : '';
+  if (!text) return res.status(400).json({ ok: false, error: 'empty' });
+  const out = await imeInsertText(text);
+  if (!out.ok) { L.warn('ime insert error', out.error); return res.status(502).json({ ok: false, error: out.error }); }
+  res.json({ ok: true });
+});
+
 
 // JSON APIs are never cached, so live metrics and the version poll are always fresh.
 router.use('/api', (req, res, next) => { noStore(res); next(); });
