@@ -1500,12 +1500,51 @@
   }
   function vkTapChar(ch){
     if(!rfb || !connected) return;
+    // Persian (and other non-Latin) glyphs have no keycode on the remote 'us'
+    // layout, so sending them as keysyms types nothing into the page. Inject
+    // them as text through the clipboard bridge (set X clipboard, then Ctrl+V).
+    if(ch.charCodeAt(0) > 0x7F){ vkTypeChar(ch); return; }
     const sym = vkKeysym(ch);
     try{ rfb.sendKey(sym, null, true); rfb.sendKey(sym, null, false); }catch(e){}
   }
   function vkTapSpecial(sp){
     if(!rfb || !connected) return;
+    // ZWNJ is a real glyph, not a physical key, so it can't be sent as a
+    // keysym either — type it through the same text bridge.
+    if(sp.code === null && sp.sym > 0x7F){ vkTypeChar(String.fromCodePoint(sp.sym)); return; }
     try{ rfb.sendKey(sp.sym, sp.code, true); rfb.sendKey(sp.sym, sp.code, false); }catch(e){}
+  }
+  // Type one character into the virtual desktop regardless of the remote
+  // keyboard layout: place it on the X clipboard via the gateway, then press
+  // Ctrl+V in the focused field. Requests are serialized so fast taps stay in
+  // order instead of racing each other's clipboard.
+  let vkTypeChain = Promise.resolve();
+  function vkTypeChar(ch){
+    vkTypeChain = vkTypeChain.then(() => new Promise((resolve) => {
+      if(!rfb || !connected){ resolve(); return; }
+      const pressPaste = () => {
+        try {
+          rfb.sendKey(0xFFE3, 'ControlLeft', true);
+          rfb.sendKey(0x76, 'KeyV', true);
+          rfb.sendKey(0x76, 'KeyV', false);
+          rfb.sendKey(0xFFE3, 'ControlLeft', false);
+        } catch (e) {}
+        setTimeout(resolve, 30);
+      };
+      try {
+        const url = location.origin + '/' + webpath + '/clipboard';
+        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                     body: JSON.stringify({ text: ch }) })
+          .then((r) => { if (!r.ok) throw new Error('http ' + r.status); pressPaste(); })
+          .catch(() => {
+            try { rfb.clipboardPasteFrom(ch); } catch (e) {}
+            setTimeout(pressPaste, 220);
+          });
+      } catch (e) {
+        try { rfb.clipboardPasteFrom(ch); } catch (e2) {}
+        setTimeout(pressPaste, 220);
+      }
+    }));
   }
   function vkPaintShift(){
     vkbPanel.classList.toggle('shift-on', vkShift);
