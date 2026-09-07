@@ -37,7 +37,8 @@
           padding:0 12px;background:var(--chrome);border-bottom:1px solid var(--chrome-border);
           backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);z-index:20;
           transition:transform .3s ease, opacity .3s ease}
-  .brand{display:flex;align-items:center;gap:11px;min-width:0;padding-left:2px}
+  .brand{display:flex;align-items:center;gap:11px;min-width:0;flex:none;padding-left:2px}
+  .brand .name{max-width:60vw;overflow:hidden;text-overflow:ellipsis}
   .brand .mark{width:30px;height:30px;border-radius:9px;flex:none;
     background:linear-gradient(135deg,var(--brand),var(--brand2));
     box-shadow:0 4px 16px rgba(124,92,255,.35), inset 0 0 0 1px rgba(255,255,255,.18);
@@ -158,6 +159,22 @@
   .clip-tip{padding:0 12px 11px;font-size:11px;color:var(--ink-dim);line-height:1.5}
   .btn.primary{background:linear-gradient(135deg,var(--brand),var(--brand2));border:0;color:#fff}
   .btn.primary:hover{filter:brightness(1.08);background:linear-gradient(135deg,var(--brand),var(--brand2))}
+  /* Narrow/tablet widths (just wider than a phone) that are too small to fit every
+     control beside the brand used to squeeze the flex row: the CPU/RAM stats and the
+     status text crowded onto (or clipped next to) the NexDesk logo and the far-right
+     controls fell off-screen. From here down the top bar scrolls horizontally so
+     nothing is ever crushed, hidden or overlapping, and the brand (flex:none above)
+     can no longer be squeezed into the neighbouring stats. */
+  @media (max-width:1024px){
+    #topbar{overflow-x:auto;overflow-y:hidden;flex-wrap:nowrap;justify-content:flex-start;
+            scrollbar-width:none;-webkit-overflow-scrolling:touch}
+    #topbar::-webkit-scrollbar{display:none}
+    #topbar .brand{padding-right:8px}
+    .spacer{flex:0 0 14px}
+    .meter{display:none}              /* CPU/RAM stats need room; they stay on wide bars */
+    #qinfo{display:none}              /* duplicated quality read-out only fits on wide bars */
+    #hint{display:none!important}
+  }
   @media (max-width:640px){
     /* Top bar becomes a floating strip above the screen: it can scroll
        horizontally when every control doesn't fit, and it slides fully off
