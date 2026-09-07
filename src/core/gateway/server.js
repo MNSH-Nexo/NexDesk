@@ -655,7 +655,9 @@ const wss = new WebSocketServer({ noServer: true });
 // bandwidth/CPU on a quiet desktop we drop near-digital-silence buffers — the
 // browser fills the gaps with silence locally, so you hear audio exactly when
 // there is audio and idle traffic stays ~zero.
-const AUDIO_SILENCE_THRESHOLD = parseInt(process.env.AUDIO_SILENCE || '12', 10); // int16 amplitude
+const AUDIO_SILENCE_THRESHOLD = parseInt(process.env.AUDIO_SILENCE || '8', 10);  // int16 amplitude
+const AUDIO_TAIL_CHUNKS = parseInt(process.env.AUDIO_TAIL_CHUNKS || '3', 10);    // silence chunks kept after sound
+const AUDIO_SEND_HWM = parseInt(process.env.AUDIO_SEND_HWM || '256', 10) * 1024; // max queued bytes before dropping
 const audioRuntime = (function () {
   try { fs.mkdirSync(AUDIO_RUNTIME_DIR, { recursive: true }); } catch (e) {}
   return AUDIO_RUNTIME_DIR;
@@ -696,7 +698,7 @@ function handleAudioUpgrade(req, socket, head, ip){
   const aSrv = new WebSocketServer({ noServer: true });
   aSrv.handleUpgrade(req, socket, head, (ws) => {
     const started = Date.now();
-    let loudBytes = 0, silentBytes = 0, chunks = 0;
+    let loudBytes = 0, silentBytes = 0, droppedBytes = 0, tailLeft = 0, chunks = 0;
     let child = null, childExited = false, closed = false;
     const env = audioEnv();
     LFILE.audio('OPEN rate=' + rate + ' ch=' + channels + ' from ' + ip);
@@ -729,8 +731,22 @@ function handleAudioUpgrade(req, socket, head, ip){
       if (closed || ws.readyState !== WebSocket.OPEN) return;
       chunks++;
       const peak = samplePeak(d);
-      if (peak < AUDIO_SILENCE_THRESHOLD){ silentBytes += d.length; return; } // drop silence
-      loudBytes += d.length;
+      // Live audio is best-effort: if the viewer is momentarily slower than the
+      // capture, skip the newest frame instead of queueing it. Queueing would
+      // make the latency grow for the whole session (audio arrives later and
+      // later — the "sound lags more over time" feel). Dropping keeps the
+      // stream pinned near real-time.
+      if (ws.bufferedAmount > AUDIO_SEND_HWM){ droppedBytes += d.length; return; }
+      if (peak < AUDIO_SILENCE_THRESHOLD){
+        // Keep a short tail of silence right after sound so the tiny dips
+        // between words or within speech are not chopped out (that felt like
+        // fast cut-outs / stutter). Only sustained quiet is skipped.
+        if (tailLeft > 0){ tailLeft--; loudBytes += d.length; }
+        else { silentBytes += d.length; return; }
+      } else {
+        loudBytes += d.length;
+        tailLeft = AUDIO_TAIL_CHUNKS;
+      }
       try { ws.send(d); } catch (e) { stop('sendError'); }
     });
     child.stderr.on('data', (d) => { LFILE.audio('parec stderr: ' + String(d).trim()); });
