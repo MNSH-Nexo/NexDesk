@@ -1547,27 +1547,38 @@ registerProcessor('nx', Nx);
     }catch(e){ aNode = null; }
   }
   function setupWorklet(){
-    // Preferred path: playback runs on the audio thread (AudioWorklet), so
-    // heavy VNC rendering on the main thread can no longer starve it.
+    // Preferred path: playback runs on the audio thread (AudioWorklet) so VNC
+    // rendering on the main thread cannot starve it. EVERY failure or hang here
+    // falls back to the proven main-thread path so audio is never silently lost.
     if(!actx || !aCfg || !window.AudioWorkletNode || !actx.audioWorklet) return false;
     const url = workletUrl();
     if(!url) return false;
-    actx.audioWorklet.addModule(url).then(() => {
-      if(!actx || !aCfg || aNode) return;
-      try{
-        const n = new AudioWorkletNode(actx, 'nx');
-        n.port.postMessage({ type:'config', rate: aCfg.rate, channels: aCfg.channels });
-        n.connect(actx.destination);
-        aNode = n; aUseWorklet = true;
-      }catch(e){ aUseWorklet = false; aNode = null; setupLegacy(); }
-    }).catch(() => { if(!aUseWorklet && !aNode) setupLegacy(); });
+    let timer = null;
+    const toLegacy = () => { timer = null; if(!aUseWorklet && !aNode) setupLegacy(); };
+    try{
+      actx.audioWorklet.addModule(url).then(() => {
+        if(timer){ clearTimeout(timer); timer = null; }
+        if(!actx || !aCfg || aNode) return;
+        try{
+          const n = new AudioWorkletNode(actx, 'nx');
+          n.port.postMessage({ type: 'config', rate: aCfg.rate, channels: aCfg.channels });
+          n.connect(actx.destination);
+          aNode = n; aUseWorklet = true;
+        }catch(e){ aUseWorklet = false; aNode = null; toLegacy(); }
+      }).catch(toLegacy);
+      // Safety net: if the worklet has not produced a working node within a
+      // second (addModule can stall behind a proxy/CSP), switch to the fallback
+      // path instead of staying silent.
+      timer = setTimeout(toLegacy, 1000);
+    }catch(e){ toLegacy(); }
     return true;
   }
   function setupNode(){
     if(!actx || !aCfg || aNode) return;
-    if(setupWorklet()) return;  // async, registers itself when ready
+    if(setupWorklet()) return;  // async: resolves to a worklet node OR legacy
     setupLegacy();
   }
+
   function scheduleAudioReconnect(){
     if(!audioOn) return;
     if(aTimer || !connected || document.visibilityState === 'hidden') return;
