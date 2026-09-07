@@ -573,7 +573,7 @@ fi
 # 6. Systemd units
 # ---------------------------------------------------------------------------
 info "Writing systemd service units..."
-BROWSER_OPTS="--disable-gpu --disable-dev-shm-usage --disable-software-rasterizer --no-first-run --no-default-browser-check --force-device-scale-factor=1 --remote-debugging-port=9223 --remote-debugging-address=127.0.0.1 --remote-allow-origins=*"
+BROWSER_OPTS="--disable-gpu --disable-dev-shm-usage --disable-software-rasterizer --no-first-run --no-default-browser-check --force-device-scale-factor=1 --remote-debugging-port=9223 --remote-debugging-address=127.0.0.1 --remote-allow-origins=* --force-prefers-reduced-motion"
 
 # What the virtual browser opens when it starts (the "empty" tab). Instead of a
 # blank about:blank we ship a self-contained branded NexDesk page under the
@@ -623,6 +623,7 @@ Description=NexDesk virtual display (Xvfb)
 After=systemd-user-sessions.service
 [Service]
 Type=simple
+Nice=-10
 ExecStart=/usr/bin/Xvfb :${DISPLAY_NUM} -screen 0 ${DISPLAY_RES}x24 -nolisten tcp
 Restart=always
 RestartSec=2
@@ -637,6 +638,7 @@ After=nexdesk-display.service
 Requires=nexdesk-display.service
 [Service]
 Type=simple
+Nice=-10
 ExecStart=/usr/bin/x11vnc -display :${DISPLAY_NUM} -nopw -shared -forever -repeat -localhost -rfbport ${VNC_PORT}
 Restart=always
 RestartSec=2
@@ -707,6 +709,7 @@ $(if [[ "$ENABLE_HTTPS" == "1" ]]; then
   printf 'Environment=TLS_KEY=%s\n' "$TLS_KEY"
   printf 'Environment=TLS_CERT=%s\n' "$TLS_CERT"
 fi)
+Nice=-5
 ExecStart=/usr/bin/node ${NX_DIR}/src/core/gateway/server.js
 Restart=always
 RestartSec=2

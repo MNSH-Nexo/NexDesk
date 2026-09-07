@@ -7,6 +7,7 @@ Requires=nexdesk-vnc.service
 Type=simple
 User=nexdesk
 WorkingDirectory=/opt/nexdesk/src/core/gateway
+Nice=-5
 Environment=NODE_ENV=production
 Environment=PORT=8087
 Environment=VNC_HOST=127.0.0.1

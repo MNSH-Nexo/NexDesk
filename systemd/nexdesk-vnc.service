@@ -4,6 +4,7 @@ After=nexdesk-display.service
 Requires=nexdesk-display.service
 [Service]
 Type=simple
+Nice=-10
 ExecStart=/usr/bin/x11vnc -display :99 -nopw -shared -forever -repeat -localhost -rfbport 5900
 Restart=always
 RestartSec=2

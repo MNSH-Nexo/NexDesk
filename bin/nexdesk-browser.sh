@@ -52,6 +52,7 @@ chown -R nexdesk:nexdesk "$PROFILE" 2>/dev/null || true
   --window-position=0,0 \
   --force-device-scale-factor=1 \
   --no-first-run --no-default-browser-check --disable-session-crashed-bubble \
+  --force-prefers-reduced-motion \
   "$START_URL" &
 CHROME_PID=$!
 
