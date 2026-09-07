@@ -1472,7 +1472,6 @@
       const frames = Math.floor(buf.byteLength / 2 / ch);
       if(frames <= 0) return;
       try{ aNode.port.postMessage({ type:'pcm', buf: buf, ch: ch }, [ buf ]); }catch(e){}
-      if(actx && actx.state === 'suspended'){ try{ actx.resume(); }catch(e){} }
       return;
     }
     if(!ring) return;
@@ -1488,31 +1487,17 @@
       if(ringCount < ringCap) ringCount++;
       else ringRead = (ringRead + 1) % ringCap;   // full -> overwrite oldest
     }
-    if(actx && actx.state === 'suspended'){ try{ actx.resume(); }catch(e){} }
   }
-  // Autoplay-with-sound is blocked on some origins (e.g. raw-IP HTTPS that
-  // never reaches Chrome's "high engagement" list). There the AudioContext is
-  // created suspended and only becomes audible after a real user gesture. Show
-  // a small floating "Enable sound" chip ONLY in that case (never on origins
-  // where audio already flows), clicking it resumes/starts inside the gesture.
-  let unlockShown = false;
-  function maybeShowUnlock(){
-    if(unlockShown || !audioOn) return;
-    if(!actx || actx.state !== 'suspended') return;
-    if(document.getElementById('audioUnlockChip')) return;
-    unlockShown = true;
-    const el = document.createElement('div');
-    el.id = 'audioUnlockChip';
-    el.setAttribute('role','button'); el.setAttribute('tabindex','0');
-    el.textContent = 'Enable sound';
-    el.style.cssText = 'position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:2147483000;padding:14px 22px;background:#1a73e8;color:#fff;border:none;border-radius:12px;font:700 15px/1.2 sans-serif;cursor:pointer;box-shadow:0 6px 24px rgba(0,0,0,.45);user-select:none;animation:pulse 1.2s infinite;';
-    el.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      try{ ensureCtx(); if(actx && actx.state === 'suspended'){ actx.resume(); } }catch(e){}
-      try{ if(audioOn && !audioWs) startAudio(); }catch(e){}
-      el.remove();
-    });
-    document.body.appendChild(el);
+  // Chrome only lets a low-MEI secure origin (fresh raw-IP HTTPS) start sound
+  // inside a REAL user gesture. The top-bar speaker button and the first
+  // click/tap/key call this, so it always runs under user activation -- the one
+  // resume() the browser honours (creating the context here also starts it
+  // running). No floating chip is needed; the top bar already has a sound toggle.
+  function activateAudioOnGesture(){
+    if(!audioOn) return;
+    if(!audioWs && connected){ startAudio(); }
+    ensureCtx();
+    if(actx && actx.state === 'suspended'){ try{ actx.resume(); }catch(e){} }
   }
 
   const WORKLET_SRC = `
@@ -1620,7 +1605,6 @@ registerProcessor('nx', Nx);
     if(!ctx) return;
     stopAudio('restart');
     ensureCtx();
-    if(actx.state === 'suspended'){ try{ actx.resume(); }catch(e){} }
     const gen = ++audioWsGen;                       // only the newest socket is authoritative
     const wsUrl2 = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/' + webpath +
                    '/audio?rate=' + Math.round(actx.sampleRate) + '&channels=1';
@@ -1632,7 +1616,7 @@ registerProcessor('nx', Nx);
         try{ const c = JSON.parse(ev.data);
           if(c && c.type === 'config'){ aCfg = { rate: c.rate || actx.sampleRate, channels: c.channels || 1 }; setupNode(); }
         }catch(e){}
-      } else { pushPCM(ev.data); maybeShowUnlock(); }
+      } else { pushPCM(ev.data); }
     };
     ws.onclose = (ev) => {
       if(audioWs === ws) audioWs = null;            // this socket is gone
@@ -1654,7 +1638,7 @@ registerProcessor('nx', Nx);
     audioOn = on;
     try{ localStorage.setItem('nexdesk_audio', on ? 'on' : 'off'); }catch(e){}
     renderSoundBtn();
-    if(on) startAudio();
+    if(on){ activateAudioOnGesture(); }
     else { stopAudio('muted'); }
     if(manual){
       toast(on ? '<b>Sound on</b><span class="upd">You’ll now hear the virtual browser.</span>'
@@ -1669,22 +1653,19 @@ registerProcessor('nx', Nx);
   // auto resume() calls elsewhere can be denied before a gesture, but a resume
   // made *inside* this handler runs under user activation and succeeds, turning
   // a load-time-suspended AudioContext audible on autoplay-blocked origins.
-  let soundUnlocked = false;
-  function unlockSound(ev){
-    if(!audioOn) return;
-    soundUnlocked = true;
-    try{ if(actx && actx.state === 'suspended'){ actx.resume(); } }catch(e){}
-    try{ if(audioOn && !audioWs && connected){ startAudio(); } }catch(e){}
-  }
+  // Unlock audio on the FIRST real user gesture (click/tap/key/drag). Instead of
+  // auto-resuming at load (which Chrome denies and logs), we resume/start inside
+  // this gesture handler so autoplay-blocked HTTPS origins become audible.
+  function unlockSound(){ if(audioOn) activateAudioOnGesture(); }
   ['pointerdown','mousedown','touchstart','pointerup','keydown','keyup'].forEach((evt) =>
     window.addEventListener(evt, unlockSound, { capture: true, passive: true }));
   document.addEventListener('visibilitychange', () => {
     if(document.visibilityState === 'visible' && audioOn && !audioWs && connected){ startAudio(); }
   });
-  // Make the floating chip unmistakable and catch Enter/Space/click on it too.
-  const chipTap = () => { unlockSound(); const c = document.getElementById('audioUnlockChip'); if(c) c.remove(); };
-  document.addEventListener('pointerdown', (e) => { if(e.target && e.target.id === 'audioUnlockChip'){ chipTap(); } });
+  // Open the stream now. On allowed origins the context is already running and
+  // sound flows immediately; on blocked ones the first gesture above resumes it.
   if(audioOn) startAudio();
+
 
   // ==========================================================================
   // Mobile on-screen keyboard — types into the virtual desktop through the same
