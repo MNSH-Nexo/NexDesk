@@ -1490,6 +1490,31 @@
     }
     if(actx && actx.state === 'suspended'){ try{ actx.resume(); }catch(e){} }
   }
+  // Autoplay-with-sound is blocked on some origins (e.g. raw-IP HTTPS that
+  // never reaches Chrome's "high engagement" list). There the AudioContext is
+  // created suspended and only becomes audible after a real user gesture. Show
+  // a small floating "Enable sound" chip ONLY in that case (never on origins
+  // where audio already flows), clicking it resumes/starts inside the gesture.
+  let unlockShown = false;
+  function maybeShowUnlock(){
+    if(unlockShown || !audioOn) return;
+    if(!actx || actx.state !== 'suspended') return;
+    if(document.getElementById('audioUnlockChip')) return;
+    unlockShown = true;
+    const el = document.createElement('div');
+    el.id = 'audioUnlockChip';
+    el.setAttribute('role','button'); el.setAttribute('tabindex','0');
+    el.textContent = 'Enable sound';
+    el.style.cssText = 'position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:2147483000;padding:12px 18px;background:#1a73e8;color:#fff;border:none;border-radius:999px;font:600 14px/1.2 sans-serif;cursor:pointer;box-shadow:0 4px 18px rgba(0,0,0,.35);user-select:none;';
+    el.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      try{ ensureCtx(); if(actx && actx.state === 'suspended'){ actx.resume(); } }catch(e){}
+      try{ if(audioOn && !audioWs) startAudio(); }catch(e){}
+      el.remove();
+    });
+    document.body.appendChild(el);
+  }
+
   const WORKLET_SRC = `
 class Nx extends AudioWorkletProcessor {
   constructor(){
@@ -1607,7 +1632,7 @@ registerProcessor('nx', Nx);
         try{ const c = JSON.parse(ev.data);
           if(c && c.type === 'config'){ aCfg = { rate: c.rate || actx.sampleRate, channels: c.channels || 1 }; setupNode(); }
         }catch(e){}
-      } else { pushPCM(ev.data); }
+      } else { pushPCM(ev.data); maybeShowUnlock(); }
     };
     ws.onclose = (ev) => {
       if(audioWs === ws) audioWs = null;            // this socket is gone
