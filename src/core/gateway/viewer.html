@@ -1641,11 +1641,26 @@ registerProcessor('nx', Nx);
     if(on){ activateAudioOnGesture(); }
     else { stopAudio('muted'); }
     if(manual){
-      toast(on ? '<b>Sound on</b><span class="upd">You’ll now hear the virtual browser.</span>'
-                : '<b>Sound off</b><span class="upd">Audio is muted.</span>', 2200);
+      if(on && actx && actx.state !== 'running'){
+        toast('<b>Sound on</b><span class="upd">Tap anywhere on the page once to start audio.</span>', 2600);
+      } else {
+        toast(on ? '<b>Sound on</b><span class="upd">You’ll now hear the virtual browser.</span>'
+                  : '<b>Sound off</b><span class="upd">Audio is muted.</span>', 2200);
+      }
     }
   }
-  btnSound.addEventListener('click', (e)=>{ e.stopPropagation(); setAudio(!audioOn, true); focusRemote(); });
+  btnSound.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    // Turning sound on always happens inside this click's user activation, so the
+    // AudioContext is created/resumed 'running' and playback starts. When sound is
+    // already marked ON but the browser hasn't granted playback yet (autoplay
+    // blocked, e.g. a fresh raw-IP HTTPS origin), this click must ENABLE audio —
+    // NOT mute it. Otherwise audio defaults to on, its context stays suspended,
+    // and the top-bar speaker appears dead: every click just toggles it off.
+    if(audioOn && actx && actx.state === 'suspended'){ setAudio(true, true); }
+    else { setAudio(!audioOn, true); }
+    focusRemote();
+  });
   // Autoplay policies need a real user gesture, so start (or resume) on first
   // interaction if sound is enabled, and refresh a live stream when the tab is
   // hidden and brought back.
