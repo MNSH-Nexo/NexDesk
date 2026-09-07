@@ -575,11 +575,12 @@ router.use("/novnc", (req, res, next) => {
   if (requested === "/") { candidates.length = 0; candidates.push("/vnc.html"); }
   (function tryCandidate(i) {
     if (i >= candidates.length) {
+      res.setHeader("Cache-Control", "no-store");   // never cache a miss
       L.warn("novnc 404", req.originalUrl);
       return res.status(404).end();
     }
     const file = path.normalize(path.join(NOVNC_DIR, candidates[i]));
-    if (!file.startsWith(NOVNC_DIR)) return res.status(403).end();
+    if (!file.startsWith(NOVNC_DIR)){ res.setHeader("Cache-Control", "no-store"); return res.status(403).end(); }
     fs.stat(file, (err, st) => {
       if (err || st.isDirectory()) return tryCandidate(i + 1);
       noCache(res);                 // revalidate each request (304 when unchanged)
@@ -591,7 +592,14 @@ router.use("/novnc", (req, res, next) => {
 app.use(BASE, router);
 
 // Any path outside BASE (including root) -> 404, hiding the service.
-app.use((req, res) => res.status(404).type("text/plain").send("Not found."));
+app.use((req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.status(404).type("text/plain").send("Not found.");
+  // Log missed viewer/noVNC asset URLs so a real 404 (e.g. a cached rfb.js that
+  // fell outside the /novnc router) is visible in the gateway log, not silent.
+  if (/\/novnc\/|rfb\.js|vendor\/|\/core\//.test(req.originalUrl))
+    L.warn("404 miss (asset)", req.method, req.originalUrl);
+});
 
 // ---- WebSocket <-> VNC bridge (only under BASE/vnc) ----
 const wss = new WebSocketServer({ noServer: true });

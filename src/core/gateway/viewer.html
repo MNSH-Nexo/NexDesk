@@ -537,17 +537,29 @@
   // path that served this page (derived from location), so no URL is hardcoded.
 
   // The noVNC assets are fetched under a cache-busting key stamped into this
-  // page by the gateway (v__NOVNC_KEY__). If a previously cached copy of this
-  // page still points at an older key whose assets are gone (404), the import
-  // below fails and we silently reload through a fresh URL so the server hands
-  // back the current page with the current key. Normal users never see this —
-  // it is a one-time silent refresh that removes the need to clear the cache.
+  // page by the gateway (v__NOVNC_KEY__). A stale cached page may still point
+  // at an older key, and some browsers keep re-serving a cached 404 for a keyed
+  // module URL even across reloads - which used to force users to clear the
+  // whole cache. We therefore try the keyed URL first and fall back to the
+  // plain, unkeyed /novnc/core/rfb.js URL (always served fresh by the gateway),
+  // so the virtual screen connects for everyone without touching their cache.
   let RFB = null;
   let rfbLoading = null;
+  // Try each module URL in order and resolve with the first that loads. The
+  // keyed URL is normally enough; the plain unkeyed URL below is a different,
+  // fresh request that the gateway always answers, so it recovers users whose
+  // browser has cached a 404 for the keyed module path.
+  async function importFirst(urls){
+    let lastErr = null;
+    for(const u of urls){
+      try { return await import(u); } catch(e){ lastErr = e; }
+    }
+    throw lastErr || new Error('no noVNC module loaded');
+  }
   function loadRFB(){
     if(RFB) return Promise.resolve(RFB);
     if(!rfbLoading){
-      rfbLoading = import('./novnc/v__NOVNC_KEY__/core/rfb.js')
+      rfbLoading = importFirst(['./novnc/v__NOVNC_KEY__/core/rfb.js', './novnc/core/rfb.js'])
         .then((m) => {
           RFB = m.default;
           try{ sessionStorage.removeItem('nexdesk_novnc_retry'); }catch(e){}
