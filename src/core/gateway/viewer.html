@@ -682,32 +682,64 @@
   };
   const qSel = $('qualitySel'), qInfo = $('qinfo');
   let qualityMode = 'auto';
-  let linkEwma = null;   // smoothed {b: delivered kbps, r: round-trip ms}
-  let lastQ = null;
   let lastModeApplied = null;
-  function applyQuality(q, c){
-    if(!rfb) return;
-    try { if(Number.isInteger(q) && q >= 0 && q <= 9) rfb.qualityLevel = q; } catch(e){}
-    try { if(Number.isInteger(c) && c >= 0 && c <= 9) rfb.compressLevel = c; } catch(e){}
-    lastQ = q;
+  // ---- adaptive engine state (Auto mode) ----
+  // (qualityLevel, compressLevel) pairs along the continuous 2..9 scale that
+  // Auto walks up and down; the manual presets reuse the same extremes.
+  const QC = { 2:[2,9], 3:[3,8], 4:[4,7], 5:[5,6], 6:[6,4], 7:[7,3], 8:[8,2], 9:[9,1] };
+  const AUTO_DEFAULT_Q = 6;
+  let autoQ = AUTO_DEFAULT_Q;      // current Auto quality level 2..9
+  let downAt = 0;                  // last time Auto cut quality (restore cooldown)
+  let lastPair = null;             // last {q,c} actually sent to noVNC (avoid churn)
+  let m = { b:0, p:0, r:0, j:0, cg:false, have:false };  // smoothed live metrics
+  // Asymmetric smoothing: react fast to a worsening signal, slow to an improving
+  // one — so Auto cuts quality the instant the link struggles and only restores
+  // it once the connection has stayed comfortably healthy for a while.
+  function mix(prev, raw, higherIsWorse){
+    const worse = higherIsWorse ? raw > prev : raw < prev;
+    const a = worse ? 0.6 : 0.22;
+    return a * raw + (1 - a) * prev;
+  }
+  function applyPair(q, c){
+    if (lastPair && lastPair.q === q && lastPair.c === c) return;  // only on a real change
+    lastPair = { q, c };
+    if (!rfb) return;
+    try { rfb.qualityLevel = q; } catch (e) {}
+    try { rfb.compressLevel = c; } catch (e) {}
   }
   function modeWord(){
     return qualityMode === 'auto' ? 'Auto' : qualityMode.charAt(0).toUpperCase() + qualityMode.slice(1);
   }
   function renderQ(){
-    const e = linkEwma || { r:0, b:0 };
-    const q = lastQ == null ? '–' : 'Q' + lastQ;
-    qInfo.textContent = modeWord() + ' · ' + q + ' · ' + Math.round(e.b) + ' kbps';
-    qInfo.title = 'Live link — ' + q + ' · ' + Math.round(e.b) + ' kbps · ' + Math.round(e.r) + ' ms latency';
+    const q = lastPair && lastPair.q != null ? 'Q' + lastPair.q : '–';
+    const warn = m.cg;
+    qInfo.textContent = modeWord() + ' · ' + q + ' · ' + Math.round(m.b) + ' kbps' + (warn ? ' · ⚠' : '');
+    qInfo.title = 'Live link — ' + q + ' · ~' + Math.round(m.p) + '→' + Math.round(m.b) + ' kbps · '
+      + Math.round(m.r) + ' ms · jitter ' + Math.round(m.j) + ' ms' + (warn ? ' · congested' : '');
+    qInfo.classList.toggle('warn', !!warn);
   }
-  function pickAutoQ(r, b){
-    // Struggling (high latency or saturated delivery) -> cut quality hard.
-    if(r > 380 || b > 6000) return { q:3, c:8 };
-    if(b > 4000 || r > 260) return { q:4, c:7 };
-    if(b > 2200)            return { q:5, c:5 };
-    // Easy link -> restore crispness.
-    if(r < 150 && b < 1200) return { q:8, c:1 };
-    return { q:6, c:4 };
+  // Auto control loop: driven every ~1 s from the gateway's precise link metrics.
+  function driveAuto(){
+    const now = Date.now();
+    // Strong congestion (real bottleneck) -> cut hard, immediately.
+    if (m.cg || m.r > 360 || m.j > 100) {
+      autoQ = 3; downAt = now;
+    } else if (m.have && m.p > 120) {
+      // Screen is actively changing -> budget by what was *delivered* (the
+      // sustainable receive rate), capped further when latency/jitter is high.
+      let t = m.b >= 4200 ? 9 : m.b >= 2600 ? 8 : m.b >= 1500 ? 7 : m.b >= 850 ? 6
+             : m.b >= 450 ? 5 : m.b >= 200 ? 4 : 3;
+      if (m.r > 300) t = Math.min(t, 3);
+      else if (m.r > 220) t = Math.min(t, 4);
+      else if (m.r > 160) t = Math.min(t, 5);
+      if (m.j > 90) t = Math.min(t, 3);
+      else if (m.j > 60) t = Math.min(t, 4);
+      if (t < autoQ) { autoQ = t; downAt = now; }                                  // drop fast
+      else if (t > autoQ && now - downAt > 8000) autoQ = Math.min(t, autoQ + 1);   // restore slowly
+    }
+    // else idle (little being sent): hold the current level to avoid churn.
+    const pair = QC[Math.max(2, Math.min(9, autoQ))];
+    applyPair(pair[0], pair[1]);
   }
   async function linkTick(){
     // Always read the live metrics (even in a manual mode) so the viewer shows
@@ -718,16 +750,22 @@
       if(!r.ok) return;
       const d = await r.json();
       if(!d || !d.ok) return;
-      const rawB = +d.txRateKbps || 0, rawR = +d.rttMs || 0;
-      linkEwma = linkEwma
-        ? { b: 0.55*linkEwma.b + 0.45*rawB, r: 0.55*linkEwma.r + 0.45*rawR }
-        : { b: rawB, r: rawR };
-      if(qualityMode === 'auto'){
-        const s = pickAutoQ(linkEwma.r, linkEwma.b);
-        applyQuality(s.q, s.c);
+      const b = +d.deliveredKbps || 0;   // what the client truly received
+      const p = +d.producedKbps || 0;    // what the gateway is sending
+      const rr = +d.rttMs || 0;
+      const jj = +d.jitterMs || 0;
+      const cg = !!d.congested;
+      if (!m.have){ m = { b, p, r: rr, j: jj, cg, have:true }; }
+      else {
+        m.b = mix(m.b, b, false);         // delivered: higher is better
+        m.p = 0.4 * p + 0.6 * m.p;
+        m.r = mix(m.r, rr, true);         // latency: higher is worse
+        m.j = mix(m.j, jj, true);
+        m.cg = cg;
       }
-      renderQ();
+      if (qualityMode === 'auto') driveAuto();
     }catch(e){}
+    renderQ();
   }
   function toast(msg, ms){
     const t = $('toast');
@@ -737,24 +775,28 @@
     clearTimeout(toast._t);
     toast._t = setTimeout(() => t.classList.remove('show'), ms || 3200);
   }
-  function setQualityMode(m){
-    const notify = m !== lastModeApplied;
-    lastModeApplied = m;
-    qualityMode = m;
-    linkEwma = null;
-    try { localStorage.setItem('nexdesk_quality', m); } catch(e){}
-    if(PRESETS[m]){
-      const p = PRESETS[m];
-      applyQuality(p.q, p.c);
-      if(notify){
-        const name = m.charAt(0).toUpperCase() + m.slice(1);
-        toast('<b>Quality: ' + name + '</b><span class="upd">' + QUALITY_NOTE[m] + '</span>', 3600);
+  function setQualityMode(mode){
+    const notify = mode !== lastModeApplied;
+    lastModeApplied = mode;
+    qualityMode = mode;
+    m.have = false;
+    try { localStorage.setItem('nexdesk_quality', mode); } catch(e){}
+    if (PRESETS[mode]) {
+      const p = PRESETS[mode];
+      applyPair(p.q, p.c);
+      if (notify) {
+        const name = mode.charAt(0).toUpperCase() + mode.slice(1);
+        toast('<b>Quality: ' + name + '</b><span class="upd">' + QUALITY_NOTE[mode] + '</span>', 3600);
       }
+    } else if (mode === 'auto') {
+      // Apply whatever Auto currently believes is right (fresh connect default).
+      const pair = QC[Math.max(2, Math.min(9, autoQ))];
+      applyPair(pair[0], pair[1]);
     }
     renderQ();
   }
   qSel.addEventListener('change', () => setQualityMode(qSel.value));
-  setInterval(linkTick, 2000);
+  setInterval(linkTick, 1000);
 
   // ----- auto-update: always deliver the latest build -----
   // The gateway reports which build is running. On each visit we sample it once;

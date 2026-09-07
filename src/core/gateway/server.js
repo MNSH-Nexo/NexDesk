@@ -136,6 +136,7 @@ const LFILE = {
   files:  (s) => writeLogFile('files.log',  s),
   upload: (s) => writeLogFile('upload.log', s),
   audio:  (s) => writeLogFile('audio.log',  s),
+  link:   (s) => writeLogFile('link.log',  s),
 };
 
 // ---- My Files path-safety + listing helpers ----
@@ -475,13 +476,24 @@ router.get('/api/stats', (req, res) => {
 });
 
 // ---- Live link metrics for the viewer's auto-quality engine ----
-// The gateway measures how many bytes are actually flowing to the active
-// viewer each second plus the round-trip latency (ws ping/pong), so the page
-// can adapt image quality to the real connection without reconnecting.
-let linkState = { txRateKbps: 0, rttMs: 0 };
+// The bridge below measures what is actually happening on the connection every
+// ~250 ms and publishes it here. producedKbps = bytes the gateway hands to the
+// WebSocket; deliveredKbps = bytes that really left the socket (what the client
+// received). When a slow client makes produced >> delivered for a while the
+// bridge flags `congested` and pauses feeding it (anti-bufferbloat), and the
+// viewer responds by lowering JPEG quality. rttMs/jitterMs come from ws
+// ping/pong. The viewer polls this over HTTP (a plain GET every ~1 s).
+let linkState = { producedKbps: 0, deliveredKbps: 0, rttMs: 0, jitterMs: 0, congested: false };
 router.get('/api/link', (req, res) => {
   if(!authed(req)) return res.status(401).json({ ok:false, error:'unauthorized' });
-  res.json({ ok:true, txRateKbps: Math.round(linkState.txRateKbps), rttMs: Math.round(linkState.rttMs) });
+  res.json({
+    ok: true,
+    producedKbps: Math.round(linkState.producedKbps),
+    deliveredKbps: Math.round(linkState.deliveredKbps),
+    rttMs: Math.round(linkState.rttMs),
+    jitterMs: Math.round(linkState.jitterMs),
+    congested: !!linkState.congested,
+  });
 });
 
 // ---- Running build version (drives the viewer's auto-update) ----
@@ -660,6 +672,16 @@ app.use((req, res) => {
 // ---- WebSocket <-> VNC bridge (only under BASE/vnc) ----
 const wss = new WebSocketServer({ noServer: true });
 
+// Anti-bufferbloat + precise link measurement knobs for the VNC bridge.
+// BR_HWM: once the gateway has this many bytes queued for a slow client it
+// pauses reading from x11vnc, so TCP backpressure makes x11vnc coalesce to the
+// latest screen state instead of the gateway stacking stale frames (which would
+// make latency grow for the whole session). It resumes once below BR_LWM.
+const BR_HWM        = parseInt(process.env.BR_HWM || '384', 10) * 1024;
+const BR_LWM        = parseInt(process.env.BR_LWM || '128', 10) * 1024;
+const BR_CTRL_MS    = parseInt(process.env.BR_CTRL_MS || '250', 10);   // measure + resume cadence
+const BR_TELE_MS    = parseInt(process.env.BR_TELE_MS || '1000', 10);  // link.log cadence
+
 // ===================== Live audio bridge =====================
 // Every listening viewer opens an authenticated WebSocket under BASE/audio. The
 // gateway spawns one `parec` capture (from the PulseAudio monitor of the virtual
@@ -796,23 +818,63 @@ function handleUpgrade(req, socket, head) {
     L.debug('ws client open', ip);
     const tcp = net.connect(VNC_PORT, VNC_HOST, () => {});
     let tcpReady = false;
-    let rxBytes = 0, txBytes = 0;   // client->server (rx) and server->client (tx) over the TCP/VNC side
-    const RATE_SEC = 5;
-    const rateTimer = setInterval(() => {
-      if (rxBytes + txBytes > 0) L.debug('ws traffic', ip, 'tx=' + txBytes + 'B rx=' + rxBytes + 'B /' + RATE_SEC + 's');
-      rxBytes = 0; txBytes = 0;
-    }, RATE_SEC * 1000).unref();
-    // Per-second delivery rate + latency, exposed to the viewer's auto-quality.
+    let paused = false;
+    let rxBytes = 0;                // client->server bytes (typing/mouse) over TCP/VNC
+    // ---- precise delivery + latency measurement + anti-bufferbloat ----
+    let attempted = 0;              // bytes handed to the WebSocket this window
+    let buffStart = 0;              // ws.bufferedAmount at the start of this window
+    let lastCtrl = Date.now();
     let lastPingAt = 0, noPong = 0;
-    ws.on('pong', () => { if (lastPingAt) { linkState.rttMs = Date.now() - lastPingAt; noPong = 0; } });
-    const wsTx = { bytes: 0 };
+    let rttSample = 0, rttEwma = 0, jitterEwma = 0;
+    // per-second telemetry accumulator (written to logs/link.log for A/B proof)
+    let tele = { produced: 0, delivered: 0, rmax: 0, jmax: 0, n: 0, congestedN: 0, pausedN: 0 };
+    let teleLast = Date.now();
+    function buffered(){ try { return ws.bufferedAmount || 0; } catch (e) { return 0; } }
+    ws.on('pong', () => {
+      if (!lastPingAt) return;
+      const r = Date.now() - lastPingAt;
+      noPong = 0;
+      rttEwma = rttEwma ? 0.65 * rttEwma + 0.35 * r : r;
+      if (rttSample) jitterEwma = jitterEwma ? 0.65 * jitterEwma + 0.35 * Math.abs(r - rttSample) : Math.abs(r - rttSample);
+      rttSample = r;
+    });
+    function controlTick(){
+      const now = Date.now();
+      const dt = Math.max(1, now - lastCtrl);
+      const buff = buffered();
+      const prodRate = (attempted * 8) / dt;           // kbps handed to the socket
+      const egress = attempted - (buff - buffStart);   // bytes that actually left
+      const delivRate = (Math.max(0, egress) * 8) / dt;
+      attempted = 0; buffStart = buff; lastCtrl = now;
+      // Publish to /api/link (the viewer reads these every ~1 s).
+      linkState.producedKbps = prodRate;
+      linkState.deliveredKbps = delivRate;
+      linkState.rttMs = rttEwma;
+      linkState.jitterMs = jitterEwma;
+      linkState.congested = paused || buff > BR_HWM;
+      // Anti-bufferbloat: stop feeding a client that cannot drain, so TCP
+      // backpressure lets x11vnc coalesce to the newest screen state instead of
+      // the gateway queuing stale frames. Resume as soon as it drains.
+      if (!paused && buff > BR_HWM) { paused = true; if (tcpReady) { try { tcp.pause(); } catch (e) {} } }
+      else if (paused && buff < BR_LWM) { paused = false; if (tcpReady) { try { tcp.resume(); } catch (e) {} } }
+      // Aggregate per-second telemetry (idle sessions are skipped to keep logs lean).
+      tele.produced += prodRate; tele.delivered += delivRate;
+      tele.rmax = Math.max(tele.rmax, rttEwma); tele.jmax = Math.max(tele.jmax, jitterEwma);
+      tele.n++; if (linkState.congested) tele.congestedN++; if (paused) tele.pausedN++;
+      if (now - teleLast >= BR_TELE_MS && (tele.produced > 0 || tele.congestedN > 0 || tele.pausedN > 0)) {
+        const s = (now - teleLast) / 1000;
+        LFILE.link('avg-prod=' + Math.round(tele.produced / tele.n) + 'kbps avg-deliv=' + Math.round(tele.delivered / tele.n) +
+          'kbps rtt=' + Math.round(tele.rmax) + 'ms jit=' + Math.round(tele.jmax) + 'ms cong=' +
+          Math.round(100 * tele.congestedN / tele.n) + '% paused=' + Math.round(100 * tele.pausedN / tele.n) + '%');
+        tele = { produced: 0, delivered: 0, rmax: 0, jmax: 0, n: 0, congestedN: 0, pausedN: 0 };
+        teleLast = now;
+      }
+    }
+    const ctrlTimer = setInterval(controlTick, BR_CTRL_MS).unref();
+    // Ping/watchdog once a second: ~4 missed pongs = silently dead link.
     const metricTimer = setInterval(() => {
-      linkState.txRateKbps = (wsTx.bytes * 8) / 1000;   // bytes in 1s -> kilobits/s
-      wsTx.bytes = 0;
       lastPingAt = Date.now();
       try { ws.ping(); noPong++; } catch (e) { lastPingAt = 0; }
-      // ~4s without a pong means the client's network died silently; drop the
-      // session so the VNC socket is freed and a fresh reconnect can succeed.
       if (noPong >= 4) teardown('noPong');
     }, 1000).unref();
     // Single, idempotent teardown wired to every exit path (ws close/error and
@@ -822,8 +884,10 @@ function handleUpgrade(req, socket, head) {
     function teardown(why) {
       if (ended) return;
       ended = true;
-      clearInterval(rateTimer);
+      clearInterval(ctrlTimer);
       clearInterval(metricTimer);
+      if (paused && tcpReady) { try { tcp.resume(); } catch (e) {} }
+      linkState.congested = false;
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         try { ws.close(1000, 'bridge end'); } catch (_) {}
       }
@@ -834,7 +898,15 @@ function handleUpgrade(req, socket, head) {
     ws.on('close', (code) => { teardown('clientClose code=' + code); });
     ws.on('error', (e) => { L.warn('ws client error', ip, e.message); teardown('clientError'); });
     tcp.on('connect', () => { tcpReady = true; L.debug('vnc tcp connected', ip, VNC_HOST + ':' + VNC_PORT); clearRemoteKeyboard(); });
-    tcp.on('data', (d) => { txBytes += d.length; wsTx.bytes += d.length; if (ws.readyState === WebSocket.OPEN) ws.send(d); });
+    tcp.on('data', (d) => {
+      attempted += d.length;
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(d);
+        // Pause the instant the queue is huge (memory + latency guard) rather
+        // than waiting for the next control tick.
+        if (!paused && buffered() > BR_HWM) { paused = true; if (tcpReady) { try { tcp.pause(); } catch (e) {} } }
+      }
+    });
     tcp.on('end', () => { L.warn('vnc tcp closed by server', ip); teardown('vncEnd'); });
     tcp.on('error', (e) => { L.error('vnc tcp error', ip, e.message); teardown('vncError'); });
   });
