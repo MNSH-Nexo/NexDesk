@@ -401,6 +401,48 @@
     #vkb .vkb-row.dense .vk{font-size:14px}
   }
   @media (hover:none),(max-width:640px){ .vkb-toggle{display:inline-flex} }
+  /* ---------- landscape keyboard: compact, authoritative overrides ----------
+     The full portrait keyboard definitions (44px keys) live later in this file
+     and so override the earlier landscape block. These rules come after them and
+     make the on-screen keyboard slim in landscape so it no longer swallows the
+     remote screen: fixed/compact top row, tighter rows and smaller keys, with
+     progressively smaller tiers on shorter (phone) viewports. */
+  @media (orientation:landscape) and (max-height:560px){
+    #vkb{background:rgba(9,9,20,.42);border-top:1px solid rgba(255,255,255,.14);
+         backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+         padding:3px 4px calc(3px + var(--sab))}
+    #vkb .vkb-top{margin:0 2px 2px;gap:5px}
+    #vkb .vkb-lang{height:18px;padding:0 5px;font-size:9px;border-radius:6px}
+    #vkb .vkb-hide{height:18px;width:18px;font-size:10px;border-radius:6px}
+    #vkb .vkb-lbl{font-size:8px}
+    #vkb .vkb-row{gap:3px;margin-bottom:2px}
+    #vkb .vkb-row.dense{gap:2px}
+    #vkb .vk{height:24px;font-size:11px;border-radius:5px;border-color:rgba(255,255,255,.07);
+             background:rgba(255,255,255,.05)}
+    #vkb .vk.fn{font-size:8.5px}
+    #vkb .vk.zwnj{font-size:7.5px}
+    body.vkb-open #app{padding-bottom:0!important}          /* screen stays full size */
+    body.vkb-open .zoom-pill{bottom:calc(var(--vkb-h,0px) + var(--sab) + 10px)}
+    body.vkb-open #toast{bottom:calc(var(--vkb-h,0px) + 14px)}
+    body.vkb-open .kbd-fab{display:none}
+    .zoom-pill{right:10px;bottom:calc(var(--sab) + 8px);height:28px;padding:0 9px;font-size:11px}
+    .kbd-fab{right:10px;bottom:calc(var(--sab) + 44px);height:28px;padding:0 9px;font-size:11px}
+  }
+  /* Shorter landscape phones: pull the keyboard in a little more. */
+  @media (orientation:landscape) and (max-height:500px){
+    #vkb{padding:2px 4px calc(2px + var(--sab))}
+    #vkb .vk{height:22px;font-size:10px}
+    #vkb .vk.fn{font-size:8px}
+  }
+  /* Very short landscape phones: keys that would otherwise leave no remote
+     screen visible are compacted further while staying tappable. */
+  @media (orientation:landscape) and (max-height:430px){
+    #vkb .vkb-top{margin-bottom:1px}
+    #vkb .vkb-row{margin-bottom:2px}
+    #vkb .vk{height:19px;font-size:9.5px}
+    #vkb .vk.fn{font-size:7.5px}
+    #vkb .vk.zwnj{font-size:7px}
+  }
 </style>
 </head>
 <body>
