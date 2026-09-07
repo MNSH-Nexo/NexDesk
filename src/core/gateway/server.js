@@ -559,30 +559,39 @@ router.get('/api/files/:name/download', (req, res) => {
 });
 
 // ---- noVNC static assets (under BASE) ----
-// The viewer loads these under /novnc/v<key>/... (any key is accepted — the
-// optional v-prefixed segment is only a cache-buster, so addresses served by
-// earlier versions of the page keep working and can never 404). Plain
-// /novnc/... URLs are served as well. Files are revalidated on each request.
-router.use('/novnc', (req, res, next) => {
-  if (!authed(req)) return res.redirect(BASE + '/login');
-  let rel = req.path.replace(/^\/v[\w.-]+\//, '/');  // strip optional /v<key>/ cache-busting prefix
-  if (rel === '/') rel = 'vnc.html';
-  const file = path.normalize(path.join(NOVNC_DIR, rel));
-  if (!file.startsWith(NOVNC_DIR)) return res.status(403).end();
-  fs.stat(file, (e, st) => {
-    if (e || st.isDirectory()){
-      L.warn('novnc 404', req.originalUrl, '->', file);
+// The viewer loads these under /novnc/v<key>/... (a cache-busting prefix) but
+// older pages may request the bare /novnc/... paths. To keep every previously
+// served address working we resolve the *literal* path first and only strip a
+// leading /v<key>/ when nothing exists at the literal path. This is important:
+// noVNC has a real top-level "vendor" directory, and a naive "strip /v.../"
+// would wrongly eat "/vendor" and turn real assets into 404s.
+router.use("/novnc", (req, res, next) => {
+  if (!authed(req)) return res.redirect(BASE + "/login");
+  const requested = (req.path || "/").replace(/^\/+/, "/");
+  const candidates = [];
+  candidates.push(requested);                       // literal path first
+  const m = requested.match(/^\/v[\w.-]+\/(.*)$/);  // optional /v<key>/ prefix
+  if (m && m[1]) candidates.push("/" + m[1].replace(/^\/+/, ""));
+  if (requested === "/") { candidates.length = 0; candidates.push("/vnc.html"); }
+  (function tryCandidate(i) {
+    if (i >= candidates.length) {
+      L.warn("novnc 404", req.originalUrl);
       return res.status(404).end();
     }
-    noCache(res);                       // revalidate each request (304 when unchanged)
-    res.sendFile(file);
-  });
+    const file = path.normalize(path.join(NOVNC_DIR, candidates[i]));
+    if (!file.startsWith(NOVNC_DIR)) return res.status(403).end();
+    fs.stat(file, (err, st) => {
+      if (err || st.isDirectory()) return tryCandidate(i + 1);
+      noCache(res);                 // revalidate each request (304 when unchanged)
+      res.sendFile(file);
+    });
+  })(0);
 });
 
 app.use(BASE, router);
 
 // Any path outside BASE (including root) -> 404, hiding the service.
-app.use((req, res) => res.status(404).type('text/plain').send('Not found.'));
+app.use((req, res) => res.status(404).type("text/plain").send("Not found."));
 
 // ---- WebSocket <-> VNC bridge (only under BASE/vnc) ----
 const wss = new WebSocketServer({ noServer: true });
