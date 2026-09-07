@@ -928,6 +928,33 @@ const CDP_HTTP    = process.env.CHROME_CDP_HTTP || 'http://127.0.0.1:9223';
 const CDP_POLL_MS = parseInt(process.env.CDP_POLL_MS || '2000', 10);
 const CHOOSER_TTL_MS = parseInt(process.env.CHOOSER_TTL_MS || '180000', 10);
 
+// Force JS popups (window.open called WITH a features/geometry argument, e.g.
+// the sign-in windows that Google / X / Apple open) to become a NEW TAB inside
+// the existing browser window instead of a separate OS window on the virtual
+// display. NexDesk runs Chrome without a window manager, so a real popup window
+// can never be closed or moved by the visitor and just sits there. Opening it
+// as a tab keeps window.opener (so OAuth "continue to <site>" flows still post
+// back and self-close) and every tab carries its own close (x) button.
+const SHIM_POPUPS_TO_TABS = [
+  '(function(){',
+  '  if (window.__nexShimmed) return;',
+  '  try { Object.defineProperty(window, "__nexShimmed", { value: true }); } catch (e) {}',
+  '  var nativeOpen = (window.open && window.open.bind) ? window.open.bind(window) : window.open;',
+  '  if (typeof nativeOpen !== "function") return;',
+  '  window.open = function(url, name, features){',
+  '    try {',
+  '      if (url == null) url = "";',
+  '      url = String(url);',
+  '      var t = (typeof name === "string" && name.length) ? name : "_blank";',
+  '      // Omit the features/geometry arg so Chrome opens a tab (current window).',
+  '      return nativeOpen(url, t);',
+  '    } catch (err) {',
+  '      return nativeOpen.apply(window, arguments);',
+  '    }',
+  '  };',
+  '})();'
+].join('\n')
+
 const cdp = {
   pages: new Map(),      // targetId -> { ws, id }
   pending: null,         // { pageId, backendNodeId, mode, at }
@@ -1093,6 +1120,9 @@ async function cdpPoll(){
         ws.send(JSON.stringify({ id: ++rec.seq, method: 'Page.enable' }));
         ws.send(JSON.stringify({ id: ++rec.seq, method: 'Runtime.enable' }));
         ws.send(JSON.stringify({ id: ++rec.seq, method: 'Page.setInterceptFileChooserDialog', params: { enabled: true } }));
+        // Popups -> tabs on every page (patches the live doc + all future docs).
+        ws.send(JSON.stringify({ id: ++rec.seq, method: 'Page.addScriptToEvaluateOnNewDocument', params: { source: SHIM_POPUPS_TO_TABS } }));
+        ws.send(JSON.stringify({ id: ++rec.seq, method: 'Runtime.evaluate', params: { expression: SHIM_POPUPS_TO_TABS, returnByValue: true } }));
       } catch (e) {}
       L.debug('cdp attached page target', t.id);
     });
