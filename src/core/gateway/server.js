@@ -301,19 +301,31 @@ function clearRemoteKeyboard(){
 }
 
 function setXClipboard(text, cb){
-  // Drop any previous clipboard owner so the newest copy wins (ignore no-match).
-  try { const pk = spawn('pkill', ['-9', '-f', 'xclip -selection clipboard']); pk.on('error', () => {}); } catch (e) {}
-  const child = spawn('xclip', ['-selection', 'clipboard', '-i'], {
-    env: Object.assign({}, process.env, { DISPLAY: XVFB_DISPLAY }),
-    stdio: ['pipe', 'ignore', 'ignore']
+  // Put the text on the virtual desktop's X clipboard so the viewer can Ctrl+V
+  // it into whatever is focused (web page, address bar, dialogs) — the one
+  // paste mechanism that works in every context, independent of keyboard layout.
+  // The clipboard owner process stays alive owning the selection.
+  const trySet = (bin, args, pat) => new Promise((resolve) => {
+    // Drop any previous clipboard owner so the newest copy wins (ignore no-match).
+    try { const pk = spawn('pkill', ['-9', '-f', pat]); pk.on('error', () => {}); } catch (e) {}
+    const child = spawn(bin, args, {
+      env: Object.assign({}, process.env, { DISPLAY: XVFB_DISPLAY }),
+      stdio: ['pipe', 'ignore', 'ignore']
+    });
+    let resolved = false;
+    child.on('error', (e) => { if (!resolved){ resolved = true; resolve(e); } });
+    child.stdin.on('error', () => {});
+    try { child.stdin.write(text); } catch (e) { if (!resolved){ resolved = true; resolve(e); } return; }
+    child.stdin.end();
+    // Answer once the bytes are handed off to the owner process.
+    setTimeout(() => { if (!resolved){ resolved = true; resolve(null); } }, 150);
   });
-  let failed = false;
-  child.on('error', (e) => { failed = true; cb(e); });
-  child.stdin.on('error', () => {});
-  try { child.stdin.write(text); } catch (e) { failed = true; return cb(e); }
-  child.stdin.end();
-  // The xclip process stays alive owning the selection; answer once bytes are handed off.
-  setTimeout(() => { if (!failed) cb(null); }, 150);
+  // Prefer xclip; if a host lacks it, fall back to xsel (common on other distros)
+  // so Persian/on-screen typing keeps working without depending on one tool.
+  trySet('xclip', ['-selection', 'clipboard', '-i'], 'xclip -selection clipboard').then((err) => {
+    if (!err) return cb(null);
+    trySet('xsel', ['--clipboard', '--input'], 'xsel --clipboard').then((err2) => cb(err2));
+  });
 }
 router.post('/clipboard', (req, res) => {
   if (!authed(req)) return res.status(401).end();
