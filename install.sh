@@ -477,9 +477,13 @@ fi
 
 # Provision launcher scripts into $NX_DIR/bin (e.g. the PulseAudio daemon helper).
 install -d -o root -g root "$NX_DIR/bin"
-for _nxbin in "$REPO_DIR/bin/nexdesk-audio.sh"; do
+for _nxbin in "$REPO_DIR/bin/nexdesk-audio.sh" "$REPO_DIR/bin/nexdesk-display.sh" "$REPO_DIR/bin/nexdesk-resize.sh"; do
   [[ -f "$_nxbin" ]] && install -m 0755 -o root -g root "$_nxbin" "$NX_DIR/bin/" 2>/dev/null || true
 done
+# Point the resolution-aware controllers at the target install dir (harmless
+# when $NX_DIR is already the default /opt/nexdesk).
+sed -i "s#/opt/nexdesk#$NX_DIR#g" "$NX_DIR/bin/nexdesk-display.sh" "$NX_DIR/bin/nexdesk-resize.sh" 2>/dev/null || true
+chmod 0755 "$NX_DIR/bin/nexdesk-display.sh" "$NX_DIR/bin/nexdesk-resize.sh" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # 4. Secrets
@@ -624,7 +628,8 @@ After=systemd-user-sessions.service
 [Service]
 Type=simple
 Nice=-10
-ExecStart=/usr/bin/Xvfb :${DISPLAY_NUM} -screen 0 ${DISPLAY_RES}x24 -nolisten tcp
+Environment=NEXDESK_DISPLAY=:${DISPLAY_NUM}
+ExecStart=${NX_DIR}/bin/nexdesk-display.sh
 Restart=always
 RestartSec=2
 [Install]
@@ -716,6 +721,29 @@ RestartSec=2
 [Install]
 WantedBy=multi-user.target
 UNIT
+
+# ---------------------------------------------------------------------------
+# Device-fit (enabled by default, matching the reference gateway): the display
+# is launched through the resolution-aware controller so a connecting device
+# reshapes the desktop to fill its own screen edge-to-edge, and the in-viewer
+# enlarge/shrink (+/-) controls rebuild it. The gateway user is granted
+# passwordless permission to run the reshape.
+# ---------------------------------------------------------------------------
+mkdir -p "$NX_DIR/state"
+if [ ! -f "$NX_DIR/state/resolution.txt" ]; then
+  printf "%s" "$DISPLAY_RES" > "$NX_DIR/state/resolution.txt"
+fi
+chown -R "$NX_USER":"$NX_USER" "$NX_DIR/state" 2>/dev/null || true
+cat > /etc/sudoers.d/nexdesk-resize <<SUDO
+Defaults:${NX_USER} !requiretty
+${NX_USER} ALL=(root) NOPASSWD: ${NX_DIR}/bin/nexdesk-resize.sh
+${NX_USER} ALL=(root) NOPASSWD: /usr/bin/systemd-run
+SUDO
+chmod 0440 /etc/sudoers.d/nexdesk-resize
+if ! visudo -cf /etc/sudoers.d/nexdesk-resize >/dev/null 2>&1; then
+  warn "Could not validate device-fit sudoers - removing it."
+  rm -f /etc/sudoers.d/nexdesk-resize
+fi
 
 systemctl daemon-reload
 for svc in nexdesk-display nexdesk-vnc nexdesk-audio nexdesk-browser nexdesk-gateway; do
