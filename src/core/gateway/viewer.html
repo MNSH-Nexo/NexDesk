@@ -61,14 +61,8 @@
           font-size:11px;font-weight:600;padding:6px 12px;border-radius:999px;pointer-events:none;
           opacity:0;transition:opacity .25s ease;white-space:nowrap;box-shadow:0 8px 24px rgba(0,0,0,.4)}
   .m-hint.show{opacity:1}
-  .zoom-pill{display:none;position:fixed;right:12px;bottom:calc(var(--sab) + 12px);z-index:24;height:34px;
-             padding:0 14px;border-radius:999px;border:1px solid var(--chrome-border);
-             background:rgba(15,15,26,.9);color:var(--ink);font-size:12px;font-weight:700;
-             backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
-             box-shadow:0 8px 26px rgba(0,0,0,.45);cursor:pointer}
-  .zoom-pill.zoom{color:#fff;border-color:rgba(124,92,255,.55);background:rgba(124,92,255,.22)}
-  /* Floating keyboard button — always visible on touch (above the zoom pill) so
-     the on-screen keyboard is one tap away even when the top bar is hidden. */
+  /* Floating keyboard button — always visible on touch so the on-screen
+     keyboard is one tap away even when the top bar is hidden. */
   .kbd-fab{display:none;position:fixed;right:12px;bottom:calc(var(--sab) + 54px);z-index:24;height:34px;
            padding:0 12px;align-items:center;gap:6px;border-radius:999px;border:1px solid var(--chrome-border);
            background:rgba(15,15,26,.92);color:var(--ink);font-size:12px;font-weight:700;
@@ -77,6 +71,27 @@
            transition:background .15s}
   .kbd-fab svg{width:15px;height:15px;stroke:currentColor;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round}
   .kbd-fab:active{background:rgba(124,92,255,.32);color:#fff}
+  /* Floating side button that reveals / collapses the control bar on touch.
+     On mobile the top bar is collapsed by default (a top overlay) so it never
+     jumps up on its own while browsing; tapping this button toggles it. */
+  .bar-tab{display:none;position:fixed;right:10px;top:calc(var(--sat) + 62px);z-index:26;width:40px;height:40px;
+           align-items:center;justify-content:center;border-radius:14px;border:1px solid rgba(255,255,255,.16);
+           background:rgba(15,15,26,.6);color:#e9e9ff;cursor:pointer;touch-action:manipulation;
+           backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+           box-shadow:0 8px 24px rgba(0,0,0,.45);
+           transition:background .2s,border-color .2s,color .2s,transform .12s}
+  .bar-tab svg{width:20px;height:20px;stroke:currentColor;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round}
+  .bar-tab .bc-close{display:none}
+  .bar-tab:active{transform:scale(.9)}
+  body.bar-open .bar-tab{border-color:rgba(124,92,255,.8);color:#fff;background:linear-gradient(135deg,var(--brand),var(--brand2));box-shadow:0 10px 26px rgba(124,92,255,.5)}
+  body.bar-open .bar-tab .bc-open{display:none}
+  body.bar-open .bar-tab .bc-close{display:block}
+  @media (hover:hover) and (pointer:fine){ .bar-tab{display:none!important} }
+  /* On touch the top bar becomes a translucent overlay sliding from the top;
+     it is collapsed (off-screen) until the side button opens it. */
+  body.touch-ui #topbar{position:absolute;top:var(--sat);left:var(--sal);right:var(--sar);z-index:22;margin:0;
+                        transform:translateY(-150%);opacity:0;pointer-events:none}
+  body.touch-ui.bar-open #topbar{transform:translateY(0);opacity:1;pointer-events:auto;box-shadow:0 16px 42px rgba(0,0,0,.5)}
   /* Mouse / trackpad mode toggle — floating, only meaningful on touch devices.
      Shown on the left so it never crowds the zoom pill + keyboard on the right. */
   .mouse-pill{display:none;position:fixed;left:12px;bottom:calc(var(--sab) + 12px);z-index:24;height:34px;
@@ -207,10 +222,11 @@
     #hint{display:none!important}
   }
   @media (max-width:640px){
-    /* Top bar becomes a floating strip above the screen: it can scroll
-       horizontally when every control doesn't fit, and it slides fully off
-       (reclaiming its 48px) when auto-hidden. Desktop keeps its old layout. */
-    #topbar{position:absolute;top:0;left:0;right:0;height:48px;padding:0 8px;
+    /* On portrait phones the top bar keeps its own row above the screen (normal
+       flow) so it never floats over the virtual browser — only in true
+       fullscreen does it overlay (see body.fs-ui below). It can scroll
+       horizontally when every control doesn't fit. Desktop keeps its layout. */
+    #topbar{height:48px;padding:0 8px;flex:none;
             overflow-x:auto;overflow-y:hidden;flex-wrap:nowrap;justify-content:flex-start;
             scrollbar-width:none;-webkit-overflow-scrolling:touch;z-index:22}
     #topbar::-webkit-scrollbar{display:none}
@@ -224,7 +240,6 @@
     /* While the on-screen keyboard is open, the remote screen shrinks above it
        so the field being typed into is never hidden behind the keys. */
     body.vkb-open #app{padding-bottom:calc(var(--vkb-h,0px) + var(--sab))}
-    body.vkb-open .zoom-pill{bottom:calc(var(--vkb-h,0px) + var(--sab) + 12px)}
     body.vkb-open #toast{bottom:calc(var(--vkb-h,0px) + 20px)}
   }
   @media (max-width:400px){ #topbar .brand .name{display:none} }
@@ -272,15 +287,17 @@
     #vkb .vk.fn{font-size:9.5px}
     #vkb .vk.zwnj{font-size:8px}
     body.vkb-open #app{padding-bottom:0!important}   /* screen keeps full size */
-    body.vkb-open .zoom-pill{bottom:calc(var(--vkb-h,0px) + var(--sab) + 12px)}
     body.vkb-open #toast{bottom:calc(var(--vkb-h,0px) + 16px)}
     body.vkb-open .kbd-fab{display:none}
-    .zoom-pill{right:10px;bottom:calc(var(--sab) + 10px);height:30px;padding:0 10px;font-size:11px}
     .kbd-fab{right:10px;bottom:calc(var(--sab) + 48px);height:30px;padding:0 10px;font-size:11px}
   }
   @media (pointer:coarse){
     #topbar{margin-bottom:env(safe-area-inset-bottom)}
   }
+  /* True fullscreen: the top bar becomes a floating overlay (auto-hides) so the
+     virtual desktop can take the entire screen. body.fs-ui is toggled from JS on
+     fullscreen change. */
+  body.fs-ui #topbar{position:absolute;top:0;left:0;right:0;height:48px;padding:0 8px;z-index:22;border-bottom:1px solid var(--chrome-border)}
   @media (max-width:840px){ .meter{display:none} }
   /* ---------- sound toggle state ---------- */
   .btn.snd-on{color:#fff;border-color:rgba(62,207,142,.4);background:rgba(62,207,142,.12)}
@@ -453,10 +470,8 @@
     #vkb .vk.fn{font-size:10px}
     #vkb .vk.zwnj{font-size:9px}
     body.vkb-open #app{padding-bottom:0!important}          /* screen stays full size */
-    body.vkb-open .zoom-pill{bottom:calc(var(--vkb-h,0px) + var(--sab) + 10px)}
     body.vkb-open #toast{bottom:calc(var(--vkb-h,0px) + 14px)}
     body.vkb-open .kbd-fab{display:none}
-    .zoom-pill{right:10px;bottom:calc(var(--sab) + 8px);height:28px;padding:0 9px;font-size:11px}
     .kbd-fab{right:10px;bottom:calc(var(--sab) + 44px);height:28px;padding:0 9px;font-size:11px}
   }
   /* Shorter landscape phones: pull the keyboard in a little more. */
@@ -509,6 +524,8 @@
       <span class="qinfo-pop">Auto adjusts the on-screen quality so it stays smooth on slow internet — it lowers detail when the connection is struggling and restores it when there's room. <b>High</b> = sharpest (more data). <b>Balanced</b> = good all-round. <b>Low</b> = uses the least data, ideal on weak networks.</span>
     </div>
     <span class="qinfo" id="qinfo" title="Live link: image quality · bandwidth · latency">Auto</span>
+    <button class="btn" id="btnScrIn" aria-label="Make the virtual page bigger" title="Make the virtual page BIGGER — elements larger, less fits on screen"><svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M11 8v6M8 11h6"/></svg></button>
+    <button class="btn" id="btnScrOut" aria-label="Make the virtual page smaller" title="Make the virtual page SMALLER — elements smaller, more fits on screen"><svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M8 11h6"/></svg></button>
     <div class="hint" id="hint">tap to show controls</div>
     <button class="btn hide-sm" id="btnFit" title="Fit / actual size"><svg class="ic" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg><span id="fitLbl">Fit</span></button>
     <button class="btn" id="btnFull" title="Fullscreen"><svg class="ic" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg></button>
@@ -519,9 +536,9 @@
     <button class="btn" id="btnRefresh" title="Reconnect"><svg class="ic" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg></button>
     <a class="btn danger" id="btnLogout" href="logout" title="Log out">Log out</a>
   </div>
-  <div id="mHint" class="m-hint">Tap anywhere to show controls</div>
-  <button id="zoomPill" class="zoom-pill" type="button" style="display:none" title="Zoom">Fit</button>
+  <div id="mHint" class="m-hint">Tap the button on the side to show the control bar</div>
   <button id="kbdFab" class="kbd-fab" type="button" style="display:none" title="Keyboard"><svg class="ic" viewBox="0 0 24 24"><rect x="2.5" y="5.5" width="19" height="13" rx="2.5"/><path d="M6 9.5h.01M9.5 9.5h.01M13 9.5h.01M16.5 9.5h.01M6 13h.01M16.5 13h.01M9.5 13h5"/></svg>Keyboard</button>
+  <button id="barTab" class="bar-tab" type="button" title="Show the control bar"><svg class="bc-open" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg><svg class="bc-close" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button>
   <button id="mousePill" class="mouse-pill" type="button" style="display:none" title="Mouse / trackpad — switch to precise pointer control"><svg class="ic" viewBox="0 0 24 24"><path d="M4.5 4.5 11 19l2.3-6.7L20 10 4.5 4.5z"/><path d="M13.3 12.3 19 18"/></svg><span class="mp-lbl">Mouse</span></button>
   <div id="mousePointer" class="mouse-pointer" style="display:none" aria-hidden="true"></div>
 
@@ -690,6 +707,9 @@
   const IS_TOUCH = window.matchMedia('(hover: none), (max-width: 640px)').matches
     || navigator.maxTouchPoints > 0
     || ('ontouchstart' in window);
+  // On touch the top control bar is collapsed by default and is toggled by a
+  // floating side button, so it never pops up on its own while browsing.
+  if(IS_TOUCH) document.body.classList.add('touch-ui');
 
   // ----- automatic reconnect on dropped links (self-healing) -----
   // connectToken invalidates the event handlers of any RFB instance we replace,
@@ -883,6 +903,132 @@
     setState('off', 'Connection failed');
   }
 
+  // ----- device-fit: reshape the shared desktop to this screen -----
+  // The virtual desktop is fixed at the aspect it was started with, so when the
+  // current window's aspect differs (wide desktop, landscape phone) whole-fit
+  // leaves the browser small with empty bars around it. We ask the gateway to
+  // rebuild the desktop at a resolution whose aspect matches this window, so
+  // the remote fills the space edge to edge. Runs for every device on first
+  // connect and again when the window is rotated or resized into a clearly
+  // different shape. Resizing rebuilds the desktop (dropping the session
+  // briefly, then auto-reconnecting), so a cooldown keeps rapid drag-resizing
+  // from causing churn while still catching real shape changes.
+  let alignLast = '';      // "WxH" of the resolution we last asked for
+  let alignAt = 0;         // timestamp of the last resize request
+  const ALIGN_COOLDOWN = 15000; // gateway refuses resizes ~12s apart; add margin
+  function alignReq(reason, delay){
+    clearTimeout(alignReq._t);
+    alignReq._t = setTimeout(() => { tryDoAlign(reason); }, delay || 0);
+  }
+  function scheduleAlign(reason){ alignReq(reason, 0); }
+  function scheduleAlignDebounced(reason){ alignReq(reason, 800); }
+  // The desktop is shared across every connected device, so auto-aligning on
+  // EVERY connect/reconnect makes two simultaneous devices fight over the
+  // shape (each reshape rebuilds the desktop and drops the other's session,
+  // which on reconnect would reshape again — an endless disconnect loop).
+  // Instead we align only once per page load (first connect) and on explicit
+  // user-driven changes: rotate, resize, or toggling fullscreen.
+  let alignInitial = false;   // first per-load alignment already requested
+  function alignOnFirstConnect(){
+    if(alignInitial) return;
+    alignInitial = true;
+    scheduleAlign('first');
+  }
+
+  // ----- manual virtual-page size (bigger / smaller elements) -----
+  // device-fit sizes the remote desktop to fill the screen; this lets the user
+  // over-ride that with a multiplier. sizeMul>1 builds a higher-resolution
+  // desktop, so once it is fitted to the screen every element is drawn smaller
+  // (more fits) — the fix for pages whose elements look too large, e.g. on a
+  // phone in landscape. sizeMul<1 draws them larger (capped by the MIN bounds).
+  // The chosen step is kept in localStorage and is also fed into every auto
+  // align (rotate / fullscreen) so a manual choice is never undone by one.
+  const SIZE_OPTS = [0.6, 0.8, 1.0, 1.3, 1.7, 2.2, 2.8];
+  const SIZE_LBL   = ['Extra big', 'Big', 'Fit (recommended)', 'Small', 'Smaller', 'Smallest', 'Tiny'];
+  const SIZE_NOTE = [
+    'elements drawn extra large',
+    'elements drawn larger than normal',
+    'matches your screen exactly',
+    'elements drawn a bit smaller',
+    'elements smaller — more fits on screen',
+    'elements much smaller',
+    'smallest — the most fits on screen'
+  ];
+  let sizeStep = 2;                       // default index 2 == "Fit"
+  try{ const v = parseInt(localStorage.getItem('nexdesk_size_step')); if(v>=0 && v<SIZE_OPTS.length) sizeStep = v; }catch(e){}
+  function sizeMul(){ return SIZE_OPTS[sizeStep]; }
+  function sizeLabel(){ return SIZE_LBL[sizeStep]; }
+  function changeSize(dir){               // +1 = smaller content · −1 = bigger content
+    let n = sizeStep + dir;
+    if(n < 0) n = 0;
+    if(n >= SIZE_OPTS.length) n = SIZE_OPTS.length - 1;
+    if(n === sizeStep){
+      toast('<b>Virtual page: ' + sizeLabel() + '</b><span class="upd">' + (dir > 0 ? 'Already the smallest.' : 'Already the largest.') + '</span>', 2200);
+      return;
+    }
+    sizeStep = n;
+    try{ localStorage.setItem('nexdesk_size_step', String(sizeStep)); }catch(e){}
+    // Rebuilding the virtual screen drops the session briefly and reconnects.
+    toast('<b>Virtual page: ' + sizeLabel() + '</b><span class="upd">' + SIZE_NOTE[n] + ' — adjusting…</span>', 2600);
+    scheduleAlign('size');
+  }
+  const btnScrIn = $('btnScrIn'), btnScrOut = $('btnScrOut');
+  if(btnScrIn)  btnScrIn.addEventListener('click',  (e)=>{ e.stopPropagation(); changeSize(-1); setTimeout(focusRemote, 60); });
+  if(btnScrOut) btnScrOut.addEventListener('click', (e)=>{ e.stopPropagation(); changeSize(+1); setTimeout(focusRemote, 60); });
+
+  function computeTarget(){
+    if(!screen || !screen.clientWidth || !screen.clientHeight) return null;
+    const cw = screen.clientWidth, ch = screen.clientHeight;
+    if(cw < 200 || ch < 100) return null;
+    const a = cw / ch;
+    const MINW = 720, MAXW = 2600, MINH = 360, MAXH = 1800;
+    // Prefer filling the width, then keep the height paired so the aspect is
+    // preserved inside the allowed resolution range. The user-chosen size step
+    // (sizeMul) scales the base fit resolution: a higher resolution means each
+    // element is drawn smaller once the whole desktop is fitted to the screen;
+    // a lower one (only down to the MIN floors) draws them larger.
+    const mul = sizeMul();
+    let w = Math.round(cw * mul);
+    let h = Math.round(w / a);
+    if(h < MINH || h > MAXH){ h = Math.min(Math.max(h, MINH), MAXH); w = Math.round(h * a); }
+    if(w < MINW || w > MAXW){ w = Math.min(Math.max(w, MINW), MAXW); h = Math.round(w / a); }
+    w = Math.min(Math.max(Math.round(w / 2) * 2, MINW), MAXW);
+    h = Math.min(Math.max(Math.round(h / 2) * 2, MINH), MAXH);
+    if(w < 2 || h < 2) return null;
+    return { w: w, h: h };
+  }
+  function tryDoAlign(reason){
+    try{
+      const t = computeTarget();
+      if(!t) return;
+      const key = t.w + 'x' + t.h;
+      const now = Date.now();
+      // Already asked for exactly this and it is recent — nothing to do.
+      if(key === alignLast && (now - alignAt) < 60000) return;
+      // Within the cooldown and the target differs: retry once the cooldown
+      // has passed rather than hammering the rebuild.
+      if(now - alignAt < ALIGN_COOLDOWN){
+        const wait = ALIGN_COOLDOWN - (now - alignAt) + 500;
+        alignReq('retry', wait);
+        return;
+      }
+      alignLast = key; alignAt = now;
+      fetch(location.origin + '/' + webpath + '/api/resize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ w: t.w, h: t.h })
+      }).then((r) => r.json()).then((j) => {
+        if(j && j.ok && j.changed){
+          // Desktop is being rebuilt; our link drops and the self-healing
+          // reconnect lands on the newly-sized screen.
+          overlay.classList.remove('hidden');
+          setState('connecting', 'Adjusting screen for this device…');
+        }
+      }).catch(() => {});
+    }catch(e){}
+  }
+
   // ----- connect -----
   // manual=true clears the backoff counter (fresh attempt from a button);
   // manual=false is used by the automatic reconnector so backoff keeps growing.
@@ -927,11 +1073,12 @@
       if(tok !== connectToken) return;
       connected = true; retryCount = 0;
       setState('connected', 'Connected'); focusRemote(); setQualityMode(qualityMode);
-      if(IS_TOUCH){ if(zoomPill) zoomPill.style.display = 'flex'; vkShowFab(); mouseShowPill(); vkMaybeAutoOpen(); scheduleHide(); }
+      if(IS_TOUCH){ vkShowFab(); mouseShowPill(); vkMaybeAutoOpen(); barTabSync(); showFirstBarHint(); }
+      alignOnFirstConnect();
     });
     rfb.addEventListener('disconnect', () => {
       if(tok !== connectToken) return;
-      connected = false; rfb = null; vkHideFab(); mouseOnDisconnect();
+      connected = false; rfb = null; vkHideFab(); mouseOnDisconnect(); barTabSync();
       // This viewer has no "disconnect" action, so ANY drop on a live tab is
       // unexpected — whether the network blipped or the gateway closed the
       // session (which the browser reports as a clean close). Self-heal in
@@ -998,51 +1145,63 @@
     clearTimeout(mHintShow._t);
     mHintShow._t = setTimeout(() => h.classList.remove('show'), 2600);
   }
-  function scheduleHide(){ clearTimeout(hideTimer); hideTimer = setTimeout(()=>{
+  function scheduleHide(){ if(IS_TOUCH) return; clearTimeout(hideTimer); hideTimer = setTimeout(()=>{
     if(document.hidden) return;
+    // Desktop, in true fullscreen only: the bar auto-hides after a pause.
     if(document.fullscreenElement){
       $('topbar').style.transform = 'translateY(-110%)';
       $('topbar').style.opacity = '0';
-      $('hint').style.display = 'block';
-    } else if(IS_TOUCH && connected && !document.body.classList.contains('landscape')){
-      $('topbar').style.transform = 'translateY(-110%)';
-      $('topbar').style.opacity = '0';
       $('topbar').style.pointerEvents = 'none';
-      mHintShow();
+      $('hint').style.display = 'block';
     }
-  }, IS_TOUCH ? 4000 : 3500); }
-  function showControls(){ clearTimeout(hideTimer);
+  }, 3500); }
+  function showControls(){ if(IS_TOUCH) return; clearTimeout(hideTimer);
     $('topbar').style.transform = 'none'; $('topbar').style.opacity = '1'; $('topbar').style.pointerEvents = 'auto';
     $('hint').style.display = 'none';
     const h = $('mHint'); if(h) h.classList.remove('show');
   }
-  if(IS_TOUCH){
-    // On touch: any tap brings the bar back (typing on the on-screen keyboard
-    // is the exception — key taps must not pop the bar while typing).
-    document.addEventListener('pointerdown', (ev)=>{
-      if(ev.target && ev.target.closest && ev.target.closest('#vkb')) return;
-      showControls(); scheduleHide();
-    });
-  } else {
+  // ----- mobile: reveal / collapse the control bar via the side button -----
+  // On touch the bar stays collapsed by default. Tapping the floating button
+  // opens it (as a top overlay) and tapping again closes it — browsing taps
+  // never pop it up on their own.
+  function setBarOpen(open){
+    document.body.classList.toggle('bar-open', !!open);
+    const t = $('barTab');
+    if(t) t.title = open ? 'Hide the control bar' : 'Show the control bar';
+  }
+  function toggleBar(){ setBarOpen(!document.body.classList.contains('bar-open')); }
+  function barTabSync(){
+    const t = $('barTab'); if(!t) return;
+    // On touch the side button is always available so the control bar is one tap
+    // away; before the remote connects it simply sits over the loading panel.
+    if(IS_TOUCH){ t.style.display = 'flex'; } else { t.style.display = 'none'; setBarOpen(false); }
+  }
+  function showFirstBarHint(){
+    let seen = false;
+    try{ seen = localStorage.getItem('nexdesk_ctrl_hint') === '1'; }catch(e){}
+    if(seen) return;
+    try{ localStorage.setItem('nexdesk_ctrl_hint', '1'); }catch(e){}
+    setTimeout(() => toast('<b>Control bar</b><span class="upd">Tap the button on the side to show or hide it.</span>', 4200), 700);
+  }
+  const barTab = $('barTab');
+  if(barTab){ barTab.addEventListener('click', (e)=>{ e.stopPropagation(); toggleBar(); setTimeout(focusRemote, 60); }); }
+  if(IS_TOUCH){ barTabSync(); }   // show the side toggle immediately on touch
+  if(!IS_TOUCH){
     document.addEventListener('pointermove', () => { showControls(); scheduleHide(); });
     document.addEventListener('pointerdown', showControls);
   }
   screen.addEventListener('pointermove', () => {}); // keep screen active
 
-  // ----- mobile screen: fit-width by default; double-tap or the floating pill
-  // toggles actual-size (1:1) with drag-to-pan. Uses noVNC's own clip/drag
-  // support (present on the installed 1.3 build). Pinching inside the canvas
-  // still zooms the page inside the virtual browser (noVNC sends Ctrl+wheel).
-  const zoomPill = $('zoomPill');
+  // ----- mobile screen: fit-width by default; double-tap toggles actual-size
+  // (1:1) with drag-to-pan. Uses noVNC's own clip/drag support (present on the
+  // installed 1.3 build). Pinching inside the canvas still zooms the page inside
+  // the virtual browser (noVNC sends Ctrl+wheel). The Fit control lives in the
+  // top control bar, so no floating zoom button is shown.
   const kbdFab = $('kbdFab');
   let mobZoomed = false;
   function setMobZoom(z){
     mobZoomed = z;
     fitMode = !z;                      // keep fitMode in sync with resize handlers
-    if(zoomPill){
-      zoomPill.textContent = z ? '1:1' : 'Fit';
-      zoomPill.classList.toggle('zoom', z);
-    }
     if(!rfb) return;
     try{ rfb.scaleViewport = fitMode; }catch(e){}
     try{ rfb.clipViewport = z; }catch(e){}
@@ -1056,7 +1215,6 @@
       : '<b>Fit to screen</b><span class="upd">Double-tap to zoom in</span>', 2000);
     setTimeout(focusRemote, 60);
   }
-  if(zoomPill) zoomPill.addEventListener('click', (e)=>{ e.stopPropagation(); toggleMobZoom(); });
   // Floating keyboard button: shown while connected on touch; opening the
   // keyboard hides it (the panel has its own close arrow), closing brings it back.
   function vkShowFab(){ if(kbdFab && IS_TOUCH && connected) kbdFab.style.display = 'flex'; }
@@ -1177,16 +1335,20 @@
   });
   document.addEventListener('fullscreenchange', () => {
     const fs = !!document.fullscreenElement;
+    document.body.classList.toggle('fs-ui', fs);
     $('btnFull').innerHTML = fs
       ? '<svg class="ic" viewBox="0 0 24 24"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg>'
       : '<svg class="ic" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>';
     if(fs){ scheduleHide(); } else { showControls(); }
+    // Fullscreen changes the available area (and hides the top bar), so after
+    // the browser finishes the transition re-fit and re-measure the desktop.
+    setTimeout(() => { applyLand(); if(rfb){ rfb.scaleViewport = fitMode; } scheduleAlign('fullscreen'); }, 350);
   });
 
   // RFB already observes its container internally; on window resize we
   // nudge it so Fit (scaleViewport) follows the new container size.
-  window.addEventListener('resize', () => { if(rfb){ rfb.scaleViewport = fitMode; } if(IS_TOUCH) vkSyncHeight(); applyLand(); });
-  window.addEventListener('orientationchange', () => setTimeout(()=> { if(rfb){ rfb.scaleViewport = fitMode; } if(IS_TOUCH){ vkSyncHeight(); vkMaybeAutoOpen(); } applyLand(); }, 300));
+  window.addEventListener('resize', () => { if(rfb){ rfb.scaleViewport = fitMode; } if(IS_TOUCH) vkSyncHeight(); applyLand(); scheduleAlignDebounced('resize'); });
+  window.addEventListener('orientationchange', () => setTimeout(()=> { if(rfb){ rfb.scaleViewport = fitMode; } if(IS_TOUCH){ vkSyncHeight(); vkMaybeAutoOpen(); } applyLand(); scheduleAlign('orient'); }, 300));
   // If the browser restores this page from its back/forward cache after a
   // deploy, the restored copy may reference stale noVNC assets — reload once
   // so it always matches the current server state.

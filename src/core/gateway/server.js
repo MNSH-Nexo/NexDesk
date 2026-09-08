@@ -475,6 +475,45 @@ router.get('/api/stats', (req, res) => {
   }, STAT_WINDOW_MS);
 });
 
+
+// ---- Desktop size alignment (fill each device) ----
+// A touch viewer announces the remote size it wants so the shared virtual
+// desktop can be rebuilt to match its screen aspect (kills the black bars).
+// Idempotent: once the running size equals the target nothing happens. Only
+// one root resize runs at a time so concurrent viewers cannot stampede.
+const RES_STATE = '/opt/nexdesk/state/resolution.txt';
+const RESIZE_SCRIPT = '/opt/nexdesk/bin/nexdesk-resize.sh';
+let resizeInFlight = false;
+let lastResizeAt = 0;
+function readCurrentRes(){
+  try{
+    const t = fs.readFileSync(RES_STATE, 'utf8').trim();
+    return /^\d{3,4}x\d{3,4}$/.test(t) ? t : null;
+  }catch(e){ return null; }
+}
+function numRes(v){ v = Number(v); return isFinite(v) ? Math.round(v) : 0; }
+router.post('/api/resize', (req, res) => {
+  if(!authed(req)) return res.status(401).json({ ok:false, error:'unauthorized' });
+  let w = numRes(req.body && req.body.w);
+  let h = numRes(req.body && req.body.h);
+  if(w < 480 || w > 2600 || h < 360 || h > 1800) return res.status(400).json({ ok:false, error:'bad size' });
+  const target = w + 'x' + h;
+  const current = readCurrentRes();
+  if(current === target) return res.json({ ok:true, changed:false, resolution: target });
+  const now = Date.now();
+  if(resizeInFlight || (now - lastResizeAt) < 12000){
+    return res.json({ ok:true, changed:false, busy:true });
+  }
+  resizeInFlight = true;
+  L.info('desktop resize -> ' + target + ' (was ' + current + ')');
+  // Run detached as its own transient root unit, so the gateway stop that
+  // the rebuild itself performs can never kill this controller mid-way.
+  const child = spawn('sudo', ['-n', 'systemd-run', '--collect', '--quiet', RESIZE_SCRIPT, target]);
+  child.on('error', (err) => { resizeInFlight = false; lastResizeAt = Date.now(); L.warn('resize spawn error ' + err.message); });
+  child.on('exit', (code) => { resizeInFlight = false; lastResizeAt = Date.now(); L.info('desktop resize done code=' + code); });
+  res.json({ ok:true, changed:true, resolution: target });
+});
+
 // ---- Live link metrics for the viewer's auto-quality engine ----
 // The bridge below measures what is actually happening on the connection every
 // ~250 ms and publishes it here. producedKbps = bytes the gateway hands to the
