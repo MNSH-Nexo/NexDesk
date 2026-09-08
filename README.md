@@ -584,8 +584,10 @@ NexDesk is released under the **NexDesk Non-Commercial License v1.0** — see
 the full terms in [LICENSE](LICENSE).
 
 In short, you may freely **use, modify, study and share** NexDesk for
-**personal, educational, research and non-profit** purposes, provided you keep
-this license and credit the original author. Any **Commercial Use** — selling,
+**personal, educational, research and non-profit** purposes. **Attribution is
+mandatory**: you must keep this license and clearly credit NexDesk and its
+original author in every copy and every derived work you distribute — this
+credit cannot be removed or hidden. Any **Commercial Use** — selling,
 reselling, licensing, hosting or otherwise exploiting NexDesk or a modified
 version of it for commercial gain — is **not permitted** without the author's
 prior written consent.

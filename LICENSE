@@ -39,9 +39,14 @@ TERMS AND CONDITIONS
 
 3. Conditions
 
-  a) Attribution. You must retain this license text together with the
-     above copyright notice in all copies or substantial portions of the
-     Software and of any Derivative Work that you distribute.
+  a) Mandatory attribution. You must retain this license text together with
+     the above copyright notice in all copies or substantial portions of the
+     Software and of any Derivative Work that you publish or distribute, and
+     every such Derivative Work must clearly and prominently acknowledge that
+     it is based on NexDesk and credit its original author, MNSH-Nexo. This
+     attribution is mandatory and may not be removed, hidden, obscured or
+     waived, whether in the source code, in accompanying documentation or in
+     any user-facing notice.
   b) Same terms for derivatives. Any Derivative Work that you publish or
      distribute must be offered under this same NexDesk Non-Commercial
      License, and must clearly state that it derives from NexDesk and is not
