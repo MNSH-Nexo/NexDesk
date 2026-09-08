@@ -974,6 +974,17 @@
     for(const b of _bs){ b.disabled = resizeBusy; b.classList.toggle('locked', resizeBusy); }
     if(resizeBusy){ resizeUnlockTimer = setTimeout(() => setResizeBusy(false), 25000); }
   }
+  // A real +/− change (and any auto-align) stays locked through reconnect with a
+  // short settle, so a fast/transient reconnect cannot drop the lock while the
+  // new desktop size is still being applied (mobile reconnects in particular are
+  // quick). The 25s safety below still caps everything.
+  let lastResizeReq = 0;
+  const RESIZE_SETTLE_MS = 2500;
+  function unlockAfterSettle(){
+    const left = lastResizeReq ? RESIZE_SETTLE_MS - (Date.now() - lastResizeReq) : 0;
+    if(left > 0){ resizeUnlockTimer = setTimeout(unlockAfterSettle, left); return; }
+    setResizeBusy(false);
+  }
   function changeSize(dir){               // +1 = smaller content · −1 = bigger content
     if(resizeBusy){
       toast('<b>Still adjusting the screen…</b><span class="upd">wait a moment, then try again.</span>', 2200);
@@ -990,6 +1001,7 @@
     // the screen later drops into the reconnect phase, so a rapid second press
     // is blocked from the very start.
     setResizeBusy(true);
+    lastResizeReq = Date.now();
     sizeStep = n;
     try{ localStorage.setItem('nexdesk_size_step', String(sizeStep)); }catch(e){}
     // Rebuilding the virtual screen drops the session briefly and reconnects.
@@ -1037,6 +1049,7 @@
         return;
       }
       alignLast = key; alignAt = now;
+      lastResizeReq = Date.now();
       setResizeBusy(true);   // lock the +/− buttons for the whole rebuild
       fetch(location.origin + '/' + webpath + '/api/resize', {
         method: 'POST',
@@ -1100,7 +1113,7 @@
       if(tok !== connectToken) return;
       connected = true; retryCount = 0;
       setState('connected', 'Connected'); focusRemote(); setQualityMode(qualityMode);
-      setResizeBusy(false);   // rebuild finished — re-enable the size buttons
+      unlockAfterSettle();   // rebuild finished — re-enable +/− (after a short settle)
       if(IS_TOUCH){ vkShowFab(); mouseShowPill(); vkMaybeAutoOpen(); barTabSync(); showFirstBarHint(); }
       alignOnFirstConnect();
     });
