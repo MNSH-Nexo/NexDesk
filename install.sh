@@ -625,6 +625,7 @@ cat > /etc/systemd/system/nexdesk-display.service <<UNIT
 [Unit]
 Description=NexDesk virtual display (Xvfb)
 After=systemd-user-sessions.service
+StartLimitIntervalSec=0
 [Service]
 Type=simple
 Nice=-10
@@ -641,6 +642,7 @@ cat > /etc/systemd/system/nexdesk-vnc.service <<UNIT
 Description=NexDesk VNC server (x11vnc)
 After=nexdesk-display.service
 Requires=nexdesk-display.service
+StartLimitIntervalSec=0
 [Service]
 Type=simple
 Nice=-10
@@ -677,6 +679,7 @@ cat > /etc/systemd/system/nexdesk-browser.service <<UNIT
 Description=NexDesk persistent browser (Chromium)
 After=nexdesk-display.service nexdesk-audio.service
 Requires=nexdesk-display.service
+StartLimitIntervalSec=0
 [Service]
 Type=simple
 User=${NX_USER}
@@ -696,6 +699,7 @@ cat > /etc/systemd/system/nexdesk-gateway.service <<UNIT
 Description=NexDesk web gateway (login + noVNC + VNC bridge)
 After=network.target nexdesk-vnc.service
 Requires=nexdesk-vnc.service
+StartLimitIntervalSec=0
 [Service]
 Type=simple
 User=${NX_USER}
