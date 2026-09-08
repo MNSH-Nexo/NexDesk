@@ -986,6 +986,10 @@
       toast('<b>Virtual page: ' + sizeLabel() + '</b><span class="upd">' + (dir > 0 ? 'Already the smallest.' : 'Already the largest.') + '</span>', 2200);
       return;
     }
+    // Lock the +/− buttons the instant this press is a real change, not when
+    // the screen later drops into the reconnect phase, so a rapid second press
+    // is blocked from the very start.
+    setResizeBusy(true);
     sizeStep = n;
     try{ localStorage.setItem('nexdesk_size_step', String(sizeStep)); }catch(e){}
     // Rebuilding the virtual screen drops the session briefly and reconnects.
@@ -1020,12 +1024,11 @@
   function tryDoAlign(reason){
     try{
       const t = computeTarget();
-      if(!t) return;
-      if(resizeBusy) return;   // a rebuild is in flight — don't stack another
+      if(!t){ setResizeBusy(false); return; }
       const key = t.w + 'x' + t.h;
       const now = Date.now();
       // Already asked for exactly this and it is recent — nothing to do.
-      if(key === alignLast && (now - alignAt) < 60000) return;
+      if(key === alignLast && (now - alignAt) < 60000){ setResizeBusy(false); return; }
       // Within the cooldown and the target differs: retry once the cooldown
       // has passed rather than hammering the rebuild.
       if(now - alignAt < ALIGN_COOLDOWN){
