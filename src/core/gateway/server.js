@@ -483,6 +483,12 @@ router.get('/api/stats', (req, res) => {
 // one root resize runs at a time so concurrent viewers cannot stampede.
 const RES_STATE = '/opt/nexdesk/state/resolution.txt';
 const RESIZE_SCRIPT = '/opt/nexdesk/bin/nexdesk-resize.sh';
+// A desktop can only be reshaped when the display is launched through a
+// controller that honours resolution.txt (nexdesk-display.sh). Only those
+// servers resize here; all others skip device-fit and keep their fixed
+// desktop, so a viewer is never left waiting on a rebuild that cannot happen.
+const DISPLAY_LAUNCHER = '/opt/nexdesk/bin/nexdesk-display.sh';
+function resizeSupported(){ return fs.existsSync(RESIZE_SCRIPT) && fs.existsSync(DISPLAY_LAUNCHER); }
 let resizeInFlight = false;
 let lastResizeAt = 0;
 function readCurrentRes(){
@@ -500,6 +506,11 @@ router.post('/api/resize', (req, res) => {
   const target = w + 'x' + h;
   const current = readCurrentRes();
   if(current === target) return res.json({ ok:true, changed:false, resolution: target });
+  if(!resizeSupported()){
+    // No reshape controller (fixed-size desktop): say unchanged so the viewer
+    // shows the remote normally and never sits on an 'adjusting screen' rebuild.
+    return res.json({ ok:true, changed:false, error:'unsupported' });
+  }
   const now = Date.now();
   if(resizeInFlight || (now - lastResizeAt) < 12000){
     return res.json({ ok:true, changed:false, busy:true });
