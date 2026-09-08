@@ -24,6 +24,7 @@
 - [Installation](#installation)
 - [Uninstall](#uninstall)
 - [First connection](#first-connection)
+- [Mobile input modes](#mobile-input-modes)
 - [Project layout](#project-layout)
 - [Configuration](#configuration)
 - [HTTP API](#http-api)
@@ -87,6 +88,12 @@ command to install and one to remove — nothing opaque, nothing cloud-locked.
   double-tap or a floating pill to toggle 1:1 zoom with drag-to-pan, and a layout
   that keeps the field you type in visible. In landscape the controls become a
   slim always-visible strip above the screen.
+- **Mobile Mouse / trackpad mode** — an optional precise-pointer layer for
+  touch devices (a floating **Mouse** pill). Drag moves a visible pointer, tap
+  clicks, **press-and-hold then drag selects text**, long hold / two-finger tap
+  right-clicks, and a **natural two-finger scroll** (drag up scrolls down).
+  When off, the classic Touch behaviour is untouched, and on a desktop device
+  the mode never appears.
 - **Live resource meter** — the top bar shows real CPU percent and RAM
   used/total with a colour gauge (green to yellow to red).
 - **Adaptive connection quality** — an Auto / High / Balanced / Low control. In
@@ -327,6 +334,9 @@ sudo ./uninstall.sh --keep-user   # keep the 'nexdesk' account
    visits.
 4. On a phone, the on-screen keyboard (English and Persian) appears for typing;
    the top bar auto-hides and returns on tap.
+5. Need precise control, hover, or want to highlight text? Tap the floating
+   **Mouse** pill to switch to trackpad mode — see
+   [Mobile input modes](#mobile-input-modes).
 
 To see your link, password and service status again from the server at any time,
 run the admin menu (installed as `nexdesk`):
@@ -336,6 +346,54 @@ sudo nexdesk info      # print the link and password
 sudo nexdesk status    # show the state of the services
 sudo nexdesk           # open the full interactive menu
 ```
+
+---
+
+## Mobile input modes
+
+On a phone or tablet the screen can be driven two ways, switched with the
+floating **Mouse** pill that appears on touch devices. Both modes overlay the
+viewer only — what you type never leaks onto the remote desktop's own UI.
+
+### Touch mode (default)
+
+The screen behaves like a touch surface:
+
+- **Tap** — left-click at that point and open the keyboard when a text field is
+  focused.
+- **Drag** — pan around a zoomed (1:1) view.
+- **Double-tap or floating zoom pill** — toggle between fit-to-width and 1:1,
+  then drag to pan.
+- **On-screen keyboard** — English and Persian layouts (symbols layer,
+  ZWNJ / half-space, Tab / Esc, hold-to-repeat Backspace) appear over the
+  viewer for typing and are sent as real key presses to the virtual Chrome.
+
+### Mouse / trackpad mode
+
+Turned on with the floating **Mouse** pill, this turns the whole screen into a
+precise trackpad that drives a visible pointer — ideal for hover menus,
+drag-and-drop, small targets and selecting text on a phone.
+
+| Gesture | Result |
+| --- | --- |
+| Single-finger drag | Move the pointer (no click, trackpad style) |
+| Tap | Left-click at the pointer |
+| Press & hold (still), then drag | **Select / highlight text** — the left button stays held while you drag |
+| Long hold, released without a drag | Right-click (context menu) |
+| Two-finger tap | Right-click |
+| Two-finger drag (up / down) | **Natural scroll** — drag up scrolls down, drag down scrolls up |
+
+Notes:
+
+- The pointer tracks your finger the way a laptop trackpad maps to the cursor —
+  you steer it to where you want to act, then click.
+- Inside Mouse mode the two-finger gestures own the screen, so use the top-bar
+  zoom control (not pinch) to change the view zoom.
+- Only the mobile browser's own touch handling is redirected; remote clicks,
+  text selection and scrolling are ordinary VNC events, so the virtual Chrome
+  sees a real mouse.
+- On a device with a fine pointer (mouse / trackpad), Mouse mode is never
+  offered and the classic desktop experience is unchanged.
 
 ---
 
