@@ -31,7 +31,6 @@
 - [Network tuning](#network-tuning)
 - [Security model](#security-model)
 - [Managing the service](#managing-the-service)
-- [Roadmap](#roadmap)
 - [License](#license)
 
 ---
@@ -569,12 +568,6 @@ sudo nexdesk
 
 ---
 
-## Roadmap
-
-- [ ] Optional multi-user accounts with per-user profiles
-- [ ] Download forwarding from the remote to the visitor's machine
-- [ ] Automatic HTTPS (Caddy / Traefik) documentation
-- [ ] Docker Compose packaging for ephemeral setups
 
 ---
 
