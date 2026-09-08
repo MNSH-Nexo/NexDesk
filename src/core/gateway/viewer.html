@@ -56,6 +56,7 @@
   #status{font-size:12px;font-weight:600;color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:24vw}
   .hint{font-size:11px;color:var(--ink-dim);opacity:.75;display:none;white-space:nowrap}
   /* ---------- mobile floating hint + zoom pill ---------- */
+  .btn:disabled, .btn.locked{opacity:.4; pointer-events:none; cursor:default; filter:grayscale(.35);}
   .m-hint{position:fixed;top:calc(var(--sat) + 10px);left:50%;transform:translateX(-50%);z-index:24;
           background:rgba(15,15,26,.92);border:1px solid var(--chrome-border);color:var(--ink-dim);
           font-size:11px;font-weight:600;padding:6px 12px;border-radius:999px;pointer-events:none;
@@ -958,7 +959,26 @@
   try{ const v = parseInt(localStorage.getItem('nexdesk_size_step')); if(v>=0 && v<SIZE_OPTS.length) sizeStep = v; }catch(e){}
   function sizeMul(){ return SIZE_OPTS[sizeStep]; }
   function sizeLabel(){ return SIZE_LBL[sizeStep]; }
+  // While a desktop rebuild is in flight the +/− (bigger/smaller) buttons are
+  // locked so a rapid second press cannot fire a second rebuild before the first
+  // finishes. They unlock the moment the rebuilt screen reconnects (and always
+  // after a safety timeout, so they can never be left disabled).
+  let resizeBusy = false;
+  let resizeUnlockTimer = null;
+  function setResizeBusy(v){
+    resizeBusy = !!v;
+    clearTimeout(resizeUnlockTimer);
+    const _bs = [];
+    if(btnScrIn) _bs.push(btnScrIn);
+    if(btnScrOut) _bs.push(btnScrOut);
+    for(const b of _bs){ b.disabled = resizeBusy; b.classList.toggle('locked', resizeBusy); }
+    if(resizeBusy){ resizeUnlockTimer = setTimeout(() => setResizeBusy(false), 25000); }
+  }
   function changeSize(dir){               // +1 = smaller content · −1 = bigger content
+    if(resizeBusy){
+      toast('<b>Still adjusting the screen…</b><span class="upd">wait a moment, then try again.</span>', 2200);
+      return;
+    }
     let n = sizeStep + dir;
     if(n < 0) n = 0;
     if(n >= SIZE_OPTS.length) n = SIZE_OPTS.length - 1;
@@ -1001,6 +1021,7 @@
     try{
       const t = computeTarget();
       if(!t) return;
+      if(resizeBusy) return;   // a rebuild is in flight — don't stack another
       const key = t.w + 'x' + t.h;
       const now = Date.now();
       // Already asked for exactly this and it is recent — nothing to do.
@@ -1013,6 +1034,7 @@
         return;
       }
       alignLast = key; alignAt = now;
+      setResizeBusy(true);   // lock the +/− buttons for the whole rebuild
       fetch(location.origin + '/' + webpath + '/api/resize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1024,8 +1046,10 @@
           // reconnect lands on the newly-sized screen.
           overlay.classList.remove('hidden');
           setState('connecting', 'Adjusting screen for this device…');
+        } else {
+          setResizeBusy(false);   // nothing is rebuilding — free the buttons
         }
-      }).catch(() => {});
+      }).catch(() => { setResizeBusy(false); });
     }catch(e){}
   }
 
@@ -1073,6 +1097,7 @@
       if(tok !== connectToken) return;
       connected = true; retryCount = 0;
       setState('connected', 'Connected'); focusRemote(); setQualityMode(qualityMode);
+      setResizeBusy(false);   // rebuild finished — re-enable the size buttons
       if(IS_TOUCH){ vkShowFab(); mouseShowPill(); vkMaybeAutoOpen(); barTabSync(); showFirstBarHint(); }
       alignOnFirstConnect();
     });
