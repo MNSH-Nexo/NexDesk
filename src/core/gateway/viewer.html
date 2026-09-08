@@ -77,6 +77,37 @@
            transition:background .15s}
   .kbd-fab svg{width:15px;height:15px;stroke:currentColor;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round}
   .kbd-fab:active{background:rgba(124,92,255,.32);color:#fff}
+  /* Mouse / trackpad mode toggle — floating, only meaningful on touch devices.
+     Shown on the left so it never crowds the zoom pill + keyboard on the right. */
+  .mouse-pill{display:none;position:fixed;left:12px;bottom:calc(var(--sab) + 12px);z-index:24;height:34px;
+              padding:0 13px;align-items:center;gap:7px;border-radius:999px;border:1px solid var(--chrome-border);
+              background:rgba(15,15,26,.92);color:var(--ink);font-size:12px;font-weight:700;
+              backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+              box-shadow:0 8px 26px rgba(0,0,0,.45);cursor:pointer;touch-action:manipulation;
+              transition:background .15s,color .15s,border-color .15s}
+  .mouse-pill svg{width:15px;height:15px;stroke:currentColor;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round}
+  .mouse-pill:active{background:rgba(124,92,255,.32);color:#fff}
+  .mouse-pill.on{color:#fff;border-color:rgba(124,92,255,.7);background:rgba(124,92,255,.28)}
+  .mouse-pill.on::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px rgba(62,207,142,.22);flex:none}
+  /* The visible on-screen pointer shown while mouse mode is active. It follows the
+     remote cursor so the user always sees where their "click" will land. */
+  .mouse-pointer{position:fixed;top:0;left:0;z-index:23;width:28px;height:28px;pointer-events:none;
+                 border-radius:50%;border:2px solid #fff;
+                 background:radial-gradient(circle, rgba(124,92,255,.30) 0%, rgba(124,92,255,.06) 55%, transparent 70%);
+                 box-shadow:0 0 0 2px rgba(124,92,255,.65), 0 2px 10px rgba(0,0,0,.5);will-change:transform}
+  .mouse-pointer::after{content:"";position:absolute;left:50%;top:50%;width:3px;height:3px;border-radius:50%;
+                        background:#fff;transform:translate(-50%,-50%);box-shadow:0 0 3px #000}
+  @media (hover:hover) and (pointer:fine){ .mouse-pill,.mouse-pointer{display:none!important} }
+  body.vkb-open .mouse-pill{bottom:calc(var(--vkb-h,0px) + var(--sab) + 12px)}
+  body.mouse-mode #screen, body.mouse-mode #screen *{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  /* In Mouse mode the overlay owns the screen's touches (trackpad/cursor and
+     two-finger scroll). Disable the browser's own pan/pinch so a two-finger
+     drag keeps delivering continuous touchmove to our handlers instead of the
+     browser hijacking it for page zoom/scroll. */
+  body.mouse-mode #screen{touch-action:none}
+  /* noVNC renders the remote cursor as a fixed <canvas> appended to <body> on
+     touch devices. In Mouse mode we show our own ring pointer, so hide it. */
+  body.mouse-mode > canvas[style*="position: fixed"]{ visibility: hidden !important; }
   /* ---------- connection quality control ---------- */
   .qctl{position:relative;display:inline-flex;align-items:center;gap:6px;height:32px;flex:none;padding:0 8px 0 6px;
         background:rgba(255,255,255,.045);border:1px solid var(--chrome-border);border-radius:9px}
@@ -491,6 +522,8 @@
   <div id="mHint" class="m-hint">Tap anywhere to show controls</div>
   <button id="zoomPill" class="zoom-pill" type="button" style="display:none" title="Zoom">Fit</button>
   <button id="kbdFab" class="kbd-fab" type="button" style="display:none" title="Keyboard"><svg class="ic" viewBox="0 0 24 24"><rect x="2.5" y="5.5" width="19" height="13" rx="2.5"/><path d="M6 9.5h.01M9.5 9.5h.01M13 9.5h.01M16.5 9.5h.01M6 13h.01M16.5 13h.01M9.5 13h5"/></svg>Keyboard</button>
+  <button id="mousePill" class="mouse-pill" type="button" style="display:none" title="Mouse / trackpad — switch to precise pointer control"><svg class="ic" viewBox="0 0 24 24"><path d="M4.5 4.5 11 19l2.3-6.7L20 10 4.5 4.5z"/><path d="M13.3 12.3 19 18"/></svg><span class="mp-lbl">Mouse</span></button>
+  <div id="mousePointer" class="mouse-pointer" style="display:none" aria-hidden="true"></div>
 
   <div id="screenWrap">
     <div id="screen"></div>
@@ -894,11 +927,11 @@
       if(tok !== connectToken) return;
       connected = true; retryCount = 0;
       setState('connected', 'Connected'); focusRemote(); setQualityMode(qualityMode);
-      if(IS_TOUCH){ if(zoomPill) zoomPill.style.display = 'flex'; vkShowFab(); vkMaybeAutoOpen(); scheduleHide(); }
+      if(IS_TOUCH){ if(zoomPill) zoomPill.style.display = 'flex'; vkShowFab(); mouseShowPill(); vkMaybeAutoOpen(); scheduleHide(); }
     });
     rfb.addEventListener('disconnect', () => {
       if(tok !== connectToken) return;
-      connected = false; rfb = null; vkHideFab();
+      connected = false; rfb = null; vkHideFab(); mouseOnDisconnect();
       // This viewer has no "disconnect" action, so ANY drop on a live tab is
       // unexpected — whether the network blipped or the gateway closed the
       // session (which the browser reports as a clean close). Self-heal in
@@ -1825,6 +1858,246 @@
     try{ if(localStorage.getItem('nexdesk_kbd_off')) return; }catch(e){}
     vkOpenPanel();
   }
+
+  // ==========================================================================
+  // Mobile Mouse / Trackpad mode (Phase 1).
+  // Adds an explicit, toggleable "Mouse" mode for touch devices only. While it
+  // is OFF the existing Touch behaviour (tap = click at point + open keyboard,
+  // drag to pan, double-tap zoom) is completely untouched. While it is ON, this
+  // overlay owns the screen's touches (capture-phase stopPropagation so neither
+  // noVNC's handlers on the canvas nor the legacy tap logic fire) and drives the
+  // remote pointer through noVNC's own _sendMouse with element-box coordinates,
+  // i.e. exactly the pipeline a native click uses — precise and scale/pan-proof.
+  // Desktop (fine pointer) never enables it; the guard CSS hides the controls.
+  // --------------------------------------------------------------------------
+  // NOTE: these bindings live at module top-level (not inside a block) so the
+  // connect()/disconnect() handlers above can reach mouseShowPill/mouseOnDisconnect.
+  const mousePill = $('mousePill');
+  const mousePtr  = $('mousePointer');
+    let mouseMode = false;
+    const mp = { x:0, y:0, init:false };          // virtual cursor (canvas-box px)
+    const mPtr = new Map();                        // active touches id -> {x,y,ox,oy,dist}
+    let mPhase = 'idle';                           // idle | single | multi
+    let mHadTwo = false;                           // gesture ever had 2+ fingers
+    let mGsT = 0, mScrollAcc = 0, mScrollBaseY = null;
+    let mLastPt = null;                            // previous live-touch coords (pointer move)
+    let mLastSend = 0;
+    let mSel = false;                              // a text-select left-drag is live (left held)
+    let mArm = false, mArmX = 0, mArmY = 0;        // armed long-hold candidate for select
+    const M_SEND_MS = 30, M_TAP_MOVE = 12, M_LONG_MS = 460, M_SEL_DRAG = 8;
+    const M_SCROLL_PX = 24;    // vertical two-finger travel (px) that yields one scroll notch
+    const M_WHEEL_DELTA = 90;  // deltaY of each synthetic wheel event (>= noVNC WHEEL_STEP)
+
+    function mouseCanvas(){ return (screen && screen.querySelector('canvas')) || (rfb && rfb._canvas) || null; }
+    function mouseCanSend(){ return rfb && rfb._rfbConnectionState === 'connected' && mouseMode; }
+
+    function mouseEnsurePos(){
+      const c = mouseCanvas(); if(!c) return;
+      const w = c.clientWidth || 1, h = c.clientHeight || 1;
+      if(!mp.init || mp.x > w || mp.y > h){ mp.x = w / 2; mp.y = h / 2; mp.init = true; }
+    }
+    function mouseSend(mask){
+      if(!mouseCanSend()) return;
+      const c = mouseCanvas(); if(!c) return;
+      const x = Math.max(0, Math.min(c.clientWidth || 1, mp.x));
+      const y = Math.max(0, Math.min(c.clientHeight || 1, mp.y));
+      try{ rfb._sendMouse(x, y, mask); rfb._mouseButtonMask = mask; }catch(e){}
+    }
+    function mouseClick(mask){
+      mouseSend(mask);
+      setTimeout(function(){ if(mouseMode) mouseSend(0); }, 70);
+    }
+    // Two-finger scroll: rather than synthesizing raw VNC wheel-button presses
+    // ourselves (which a server can drop if the pointer isn't over a scrollable
+    // element), we dispatch a real DOM 'wheel' event on the RFB canvas at the
+    // two fingers' current position. noVNC keeps its own battle-tested wheel
+    // handler on that canvas — the very same one every desktop scroll uses — so
+    // it scrolls whatever is under the two fingers, exactly mirroring the native
+    // two-finger scroll that already works when Mouse mode is off.
+    function mouseScrollWheel(clientX, clientY, deltaY){
+      if(!mouseCanSend()) return;
+      const c = mouseCanvas(); if(!c) return;
+      try{
+        const ev = new WheelEvent('wheel', {
+          deltaY: deltaY, deltaMode: 0,
+          clientX: clientX, clientY: clientY,
+          bubbles: true, cancelable: true
+        });
+        c.dispatchEvent(ev);
+      }catch(e){}
+    }
+    // Force-release any pressed button at the pointer (used when leaving mouse
+    // mode, in case a click's release was still pending).
+    function mouseReleaseAll(){
+      if(!rfb || rfb._rfbConnectionState !== 'connected') return;
+      const c = mouseCanvas(); if(!c) return;
+      try{ rfb._sendMouse(Math.max(0, Math.min(c.clientWidth || 1, mp.x)), Math.max(0, Math.min(c.clientHeight || 1, mp.y)), 0); }catch(e){}
+    }
+    function mouseRender(){
+      if(!mousePtr) return;
+      if(!mouseMode){ mousePtr.style.display = 'none'; return; }
+      const c = mouseCanvas(); if(!c){ mousePtr.style.display = 'none'; return; }
+      const r = c.getBoundingClientRect();
+      mousePtr.style.display = 'block';
+      mousePtr.style.transform = 'translate(' + (r.left + mp.x) + 'px,' + (r.top + mp.y) + 'px) translate(-50%,-50%)';
+    }
+    function mouseLbl(text, on){
+      if(!mousePill) return;
+      mousePill.classList.toggle('on', !!on);
+      const s = mousePill.querySelector('.mp-lbl');
+      if(s) s.textContent = text;
+    }
+    function mouseSetMode(on){
+      if(on === mouseMode) return;
+      mouseMode = on;
+      mPhase = 'idle'; mHadTwo = false; mPtr.clear(); mSel = false; mArm = false; mScrollAcc = 0; mScrollBaseY = null; mLastPt = null;
+      if(on){
+        document.body.classList.add('mouse-mode');
+        showControls();
+        mouseEnsurePos(); mouseRender();
+        mouseLbl('Mouse', true);
+        toast('<b>Mouse mode</b><span class="upd">Drag = move · Tap = click · Hold + drag = select text · 2-finger tap/hold = right-click · 2-finger drag = scroll</span>', 5200);
+      } else {
+        document.body.classList.remove('mouse-mode');
+        mouseLbl('Mouse', false);
+        mouseReleaseAll();
+        if(mousePtr) mousePtr.style.display = 'none';
+      }
+      setTimeout(focusRemote, 40);
+    }
+    function mouseShowPill(){ if(mousePill && IS_TOUCH && connected) mousePill.style.display = 'flex'; }
+    function mouseHidePill(){ if(mousePill) mousePill.style.display = 'none'; }
+    function mouseOnDisconnect(){ mouseSetMode(false); mouseHidePill(); }
+    if(mousePill) mousePill.addEventListener('click', function(e){ e.stopPropagation(); mouseSetMode(!mouseMode); });
+
+    // Return true only when this touch belongs to mouse mode and started on the
+    // virtual screen (never on the floating controls). stopPropagation at this
+    // capture point prevents noVNC's canvas handlers AND the legacy tap logic
+    // (both bubble/target-phase) from seeing it.
+    function mouseGuard(e){
+      if(!mouseMode || !connected) return false;
+      const t = e.changedTouches && e.changedTouches[0];
+      let el = t ? document.elementFromPoint(t.clientX, t.clientY) : (e.target || null);
+      if(el && screen && (el === screen || screen.contains(el))){
+        if(e.cancelable) e.preventDefault();
+        e.stopPropagation();
+        return true;
+      }
+      return false;
+    }
+    function mouseTs(e){
+      if(!mouseGuard(e)) return;
+      const fresh = mPtr.size === 0;
+      for(const t of e.changedTouches){
+        mPtr.set(t.identifier, { x:t.clientX, y:t.clientY, ox:t.clientX, oy:t.clientY, dist:0 });
+      }
+      if(fresh){ mGsT = Date.now(); mHadTwo = false; mPhase = mPtr.size >= 2 ? 'multi' : 'single'; mSel = false; mArm = false; mScrollAcc = 0; mScrollBaseY = null; mLastPt = null; }
+      if(mPtr.size >= 2){
+        // A second finger landed: never start or keep a text-select drag with 2+ fingers.
+        if(mSel){ mouseSend(0); mSel = false; } mArm = false;
+        mHadTwo = true; mPhase = 'multi'; mScrollBaseY = null;
+      }
+    }
+    function mouseTm(e){
+      if(!mouseGuard(e)) return;
+      // Update per-finger bookkeeping used for tap/gesture classification.
+      for(const t of e.changedTouches){
+        const p = mPtr.get(t.identifier);
+        if(p){
+          const d = Math.hypot(t.clientX - p.ox, t.clientY - p.oy); if(d > p.dist) p.dist = d;
+          p.x = t.clientX; p.y = t.clientY;
+        }
+      }
+      const n = e.touches.length;               // how many fingers are down right now
+      const now = Date.now();
+      if(n === 1){
+        // A leftover single finger after a two-finger gesture must NOT start
+        // moving the pointer until the whole hand has been lifted.
+        if(mPhase === 'multi'){ mLastPt = { x: e.touches[0].clientX, y: e.touches[0].clientY }; mScrollBaseY = null; mScrollAcc = 0; return; }
+        const t = e.touches[0];
+        // Text-select: a single finger HELD STILL for M_LONG_MS ("long press") only
+        // becomes a candidate (mArm) and does nothing by itself. If the finger then
+        // starts to drag (travels > M_SEL_DRAG from where it settled) we press & hold
+        // the LEFT button at the pointer and keep it held while the finger moves, so
+        // the drag selects an arbitrary run of text. A long press released WITHOUT
+        // that drag never commits and still falls back to right-click in mouseEnd.
+        if(!mSel && !mHadTwo && mPhase === 'single' && !mArm && (now - mGsT) >= M_LONG_MS){
+          const p = mPtr.get(t.identifier);
+          if(p && p.dist <= M_TAP_MOVE){ mArm = true; mArmX = t.clientX; mArmY = t.clientY; }
+        }
+        if(!mSel && mArm && Math.hypot(t.clientX - mArmX, t.clientY - mArmY) > M_SEL_DRAG){
+          mArm = false; mSel = true;                       // commit: begin a left-drag select
+          mLastPt = { x: t.clientX, y: t.clientY };
+          mouseRender();
+          mouseSend(1); mLastSend = now;                   // left press anchors the selection
+        }
+        // Pointer motion. While a select-drag is live we move the pointer and keep
+        // LEFT held; otherwise a single-finger drag just moves the pointer (no click)
+        // exactly as before. An armed-but-not-committed hold keeps the pointer still.
+        if(!mArm){
+          if(mLastPt){ mp.x += (t.clientX - mLastPt.x); mp.y += (t.clientY - mLastPt.y); }
+          mLastPt = { x: t.clientX, y: t.clientY };
+        }
+        mouseRender();
+        if(now - mLastSend >= M_SEND_MS){ mouseSend(mSel ? 1 : 0); mLastSend = now; }
+      } else if(n >= 2){
+        mLastPt = null;
+        // Two or more fingers are down. Two outcomes, decided here / on release:
+        //  - a quick tap (little movement) => right-click at the CURSOR, decided
+        //    in mouseEnd. Crucially we must NOT relocate the cursor while the
+        //    fingers are down: that relocation is exactly what made a two-finger
+        //    tap jump the pointer away and fire the right-click elsewhere.
+        //  - a vertical drag               => scroll, delivered below by throwing
+        //    real 'wheel' events onto the RFB canvas at the fingers' position,
+        //    so noVNC's own wheel path scrolls what sits under the two fingers.
+        let sx = 0, sy = 0; for(let i = 0; i < n; i++){ sx += e.touches[i].clientX; sy += e.touches[i].clientY; }
+        const ax = sx / n, ay = sy / n;
+        if(mScrollBaseY == null){ mScrollBaseY = ay; mScrollAcc = 0; return; }
+        // Natural/trackpad direction: dragging the two fingers UP scrolls the page
+        // DOWN and dragging DOWN scrolls UP, i.e. content follows the fingers.
+        const dy = ay - mScrollBaseY; mScrollBaseY = ay; mScrollAcc -= dy;
+        while(mScrollAcc >= M_SCROLL_PX){ mouseScrollWheel(ax, ay, M_WHEEL_DELTA); mScrollAcc -= M_SCROLL_PX; }
+        while(mScrollAcc <= -M_SCROLL_PX){ mouseScrollWheel(ax, ay, -M_WHEEL_DELTA); mScrollAcc += M_SCROLL_PX; }
+      }
+    }
+    function mouseEnd(e){
+      if(!mouseGuard(e)) return;
+      let maxDist = 0; mPtr.forEach(function(p){ if(p.dist > maxDist) maxDist = p.dist; });
+      const had = mPtr.size;
+      for(const t of e.changedTouches) mPtr.delete(t.identifier);
+      if(had > 0 && mPtr.size === 0){
+        if(mSel){
+          // A text-select drag ended: release the left button. The remote app keeps
+          // the selection just made; do not also fire a tap/right-click.
+          mouseSend(0); mSel = false;
+        } else {
+          const dur = Date.now() - mGsT;
+          if(maxDist <= M_TAP_MOVE){
+            if(mHadTwo) mouseClick(4);                    // two-finger tap = right
+            else if(dur >= M_LONG_MS) mouseClick(4);       // hold (no drag) = right
+            else mouseClick(1);                            // short tap = left
+          }
+        }
+        mPhase = 'idle'; mHadTwo = false; mArm = false; mScrollAcc = 0; mScrollBaseY = null; mLastPt = null;
+      }
+    }
+    function mouseCancel(e){
+      if(!mouseGuard(e)) return;
+      for(const t of e.changedTouches) mPtr.delete(t.identifier);
+      if(mPtr.size === 0){
+        if(mSel){ mouseSend(0); mSel = false; }
+        mPhase = 'idle'; mHadTwo = false; mArm = false; mScrollAcc = 0; mScrollBaseY = null; mLastPt = null;
+      }
+    }
+
+    // Only touch devices need these listeners; fine-pointer devices never fire
+    // touch events, so attaching only when IS_TOUCH keeps the desktop path inert.
+    if(IS_TOUCH){
+      screen.addEventListener('touchstart',  mouseTs,     { capture:true, passive:false });
+      screen.addEventListener('touchmove',   mouseTm,     { capture:true, passive:false });
+      screen.addEventListener('touchend',    mouseEnd,    { capture:true, passive:false });
+      screen.addEventListener('touchcancel', mouseCancel, { capture:true, passive:false });
+    }
 
   connect();
 </script>
