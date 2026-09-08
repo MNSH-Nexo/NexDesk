@@ -477,7 +477,7 @@ fi
 
 # Provision launcher scripts into $NX_DIR/bin (e.g. the PulseAudio daemon helper).
 install -d -o root -g root "$NX_DIR/bin"
-for _nxbin in "$REPO_DIR/bin/nexdesk-audio.sh" "$REPO_DIR/bin/nexdesk-display.sh" "$REPO_DIR/bin/nexdesk-resize.sh"; do
+for _nxbin in "$REPO_DIR/bin/nexdesk-audio.sh" "$REPO_DIR/bin/nexdesk-display.sh" "$REPO_DIR/bin/nexdesk-resize.sh" "$REPO_DIR/bin/nexdesk-devicefit-install.sh"; do
   [[ -f "$_nxbin" ]] && install -m 0755 -o root -g root "$_nxbin" "$NX_DIR/bin/" 2>/dev/null || true
 done
 # Point the resolution-aware controllers at the target install dir (harmless
