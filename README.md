@@ -580,9 +580,20 @@ sudo nexdesk
 
 ## License
 
-An explicit license file has not been added to this repository yet. Until one is
-added, assume the standard all-rights-reserved copyright and contact the
-maintainer for reuse terms.
+NexDesk is released under the **NexDesk Non-Commercial License v1.0** — see
+the full terms in [LICENSE](LICENSE).
+
+In short, you may freely **use, modify, study and share** NexDesk for
+**personal, educational, research and non-profit** purposes, provided you keep
+this license and credit the original author. Any **Commercial Use** — selling,
+reselling, licensing, hosting or otherwise exploiting NexDesk or a modified
+version of it for commercial gain — is **not permitted** without the author's
+prior written consent.
+
+Because it restricts commercial use, NexDesk is **source-available**, not
+"open source" in the OSI sense of permissive licenses such as MIT or Apache-2.0
+(which would allow commercial use). If you need a commercial license, contact
+the maintainer.
 
 NexDesk is an independent project and is not affiliated with, endorsed by, or
 trademarked by Google, the Chromium project, or the noVNC project.
