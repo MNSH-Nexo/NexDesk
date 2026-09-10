@@ -1078,6 +1078,8 @@ const CDP_POLL_MS = parseInt(process.env.CDP_POLL_MS || '2000', 10);
 const CHOOSER_TTL_MS = parseInt(process.env.CHOOSER_TTL_MS || '180000', 10);
 const BROWSER_CDP_POLL_MS = parseInt(process.env.BROWSER_CDP_POLL_MS || '5000', 10);
 const DOWNLOAD_TAIL_MS = parseInt(process.env.DOWNLOAD_TAIL_MS || '30000', 10);
+// How often Chrome's own download folder is checked for a finished file.
+const CHROME_DL_WATCH_MS = parseInt(process.env.CHROME_DL_WATCH_MS || '1500', 10);
 
 // ===================== Browser-level CDP: download destination =====================
 // A second, browser-scoped DevTools link (the ones above are per tab) tells Chrome
@@ -1138,6 +1140,13 @@ function onDownloadProgress(p){
     d.filename = resolveFinishedName(d);
     delete d.before;
     if (d.total == null) d.total = d.received;
+    // If the reported name is not in MyFiles, Chrome saved it under its own
+    // default folder instead. Bring it in now so the visitor sees it in the
+    // panel at the very moment the download finishes.
+    if (!fs.existsSync(path.join(MYFILES_DIR, d.filename))){
+      const pulled = adoptChromeDownload(d.filename, d.site, d.url, { report: false });
+      if (pulled) d.filename = pulled;
+    }
     recordOrigin(d.filename, d.site, d.url);
     LFILE.files('DL complete guid=' + d.guid + ' file=' + d.filename + ' bytes=' + d.received);
     L.info('browser download complete', d.filename, d.received, 'bytes');
@@ -1180,7 +1189,16 @@ async function browserSetDownloadDir(){
 }
 async function cdpBrowserMonitor(){
   if (browserConnecting) return;
-  if (browserWs && browserWs.readyState === WebSocket.OPEN) return;
+  if (browserWs && browserWs.readyState === WebSocket.OPEN){
+    // A connection that has quietly stopped delivering can sit in OPEN forever,
+    // never firing 'close'. Ask it something real: if it cannot answer, drop it
+    // so the next tick rebuilds it and re-applies the download folder.
+    const alive = await browserCommand('Browser.getVersion', {});
+    if (alive && !alive.error) return;
+    L.warn('browser link is not answering — reconnecting');
+    try { browserWs.close(); } catch (e) {}
+    browserWs = null;
+  }
   browserConnecting = true;
   try {
     const info = await cdpJson('/json/version');
@@ -1208,9 +1226,84 @@ async function cdpBrowserMonitor(){
     await browserSetDownloadDir();
   } finally { browserConnecting = false; }
 }
-// Courtesy one-time import: earlier NexDesk builds let Chrome save downloads to
-// its own default folder, so any file still there is moved into MyFiles (never
-// overwriting) to keep the two in step. A no-op once that folder is empty.
+// Move one finished download from Chrome's own folder into MyFiles, under a
+// name that never clobbers an existing file, and remember where it came from.
+function adoptChromeDownload(suggested, site, url, opts){
+  const name = safeFileName(String(suggested || ''));
+  if (!name) return null;
+  const from = path.join(CHROME_DL_IMPORT_DIR, name);
+  let st = null;
+  try { st = fs.statSync(from); } catch (e) { return null; }
+  if (!st.isFile()) return null;
+  const dot = name.lastIndexOf('.');
+  const base = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : '';
+  let target = path.join(MYFILES_DIR, name), i = 1;
+  while (fs.existsSync(target)) target = path.join(MYFILES_DIR, base + ' (' + (i++) + ')' + ext);
+  try { fs.renameSync(from, target); }
+  catch (e) {
+    // Different filesystem, or the handle is briefly held: copy then drop.
+    try { fs.copyFileSync(from, target); fs.unlinkSync(from); }
+    catch (e2) { L.warn('cannot bring browser download into files', name, e2.message); return null; }
+  }
+  const got = path.basename(target);
+  let size = st.size;
+  try { size = fs.statSync(target).size; } catch (e) {}
+  recordOrigin(got, site || '', url || '');
+  if (!opts || opts.report !== false) reportAdoptedDownload(got, size, site, url);
+  LFILE.files('DL adopt ' + name + ' -> ' + got + ' bytes=' + size);
+  L.info('browser download landed in files', got);
+  return got;
+}
+// Best guess at where an adopted file came from: the newest download the browser
+// reported under the same suggested name.
+function originHintFor(suggested){
+  let best = null;
+  for (const d of downloads.values()){
+    if (d.filename === suggested && (!best || d.startedAt > best.startedAt)) best = d;
+  }
+  return best ? { site: best.site, url: best.url } : { site: '', url: '' };
+}
+// Announce a file that arrived without a download event, so the panel can show
+// it the same way as one it watched live.
+function reportAdoptedDownload(name, size, site, url){
+  const guid = 'fs:' + name;
+  const prev = downloads.get(guid);
+  downloads.set(guid, {
+    guid, filename: name, url: url || '', site: site || '',
+    state: 'completed', received: size, total: size,
+    startedAt: prev ? prev.startedAt : Date.now(), finishedAt: Date.now(), done: true,
+  });
+  pruneDownloads();
+}
+// The browser link reports downloads as they happen, but it can go quiet (and
+// some Chrome builds ignore the folder we ask for). So the folder Chrome falls
+// back to is watched too: a file is taken once its size has stopped changing, so
+// a download still in flight is never pulled out from under Chrome. Whatever
+// happens, a file the visitor downloaded inside the browser ends up in the Files
+// panel — downloadable to their computer, deletable, and usable as an upload.
+const chromeFolderSeen = new Map();   // name -> size seen on the previous tick
+function watchChromeFolder(){
+  if (!ensureMyFiles()) return;
+  if (path.resolve(CHROME_DL_IMPORT_DIR) === path.resolve(MYFILES_DIR)) return;
+  let names = [];
+  try { names = fs.readdirSync(CHROME_DL_IMPORT_DIR); } catch (e) { names = []; }
+  const seen = new Set();
+  for (const n of names){
+    if (n.startsWith('.') || /\.crdownload$/i.test(n)) continue;
+    const full = path.join(CHROME_DL_IMPORT_DIR, n);
+    let st = null;
+    try { st = fs.statSync(full); } catch (e) { continue; }
+    if (!st.isFile()) continue;
+    seen.add(n);
+    if (chromeFolderSeen.get(n) !== st.size){ chromeFolderSeen.set(n, st.size); continue; }
+    const hint = originHintFor(n);
+    adoptChromeDownload(n, hint.site, hint.url);
+  }
+  for (const k of Array.from(chromeFolderSeen.keys())) if (!seen.has(k)) chromeFolderSeen.delete(k);
+}
+// One sweep at startup for anything left in Chrome's own folder by an earlier
+// build — the panel does not need to be told about old files.
 function importLegacyDownloads(){
   if (!ensureMyFiles()) return;
   if (path.resolve(CHROME_DL_IMPORT_DIR) === path.resolve(MYFILES_DIR)) return;
@@ -1218,25 +1311,10 @@ function importLegacyDownloads(){
   try { names = fs.readdirSync(CHROME_DL_IMPORT_DIR); } catch (e) { return; }
   let moved = 0;
   for (const n of names){
-    const clean = safeFileName(n);
-    if (!clean) continue;
-    const from = path.join(CHROME_DL_IMPORT_DIR, n);
-    try {
-      const st = fs.statSync(from);
-      if (!st.isFile()) continue;
-      const dot = clean.lastIndexOf('.');
-      const base = dot > 0 ? clean.slice(0, dot) : clean;
-      const ext = dot > 0 ? clean.slice(dot) : '';
-      let target = path.join(MYFILES_DIR, clean), i = 1;
-      while (fs.existsSync(target)) target = path.join(MYFILES_DIR, base + ' (' + (i++) + ')' + ext);
-      fs.renameSync(from, target);
-      const got = path.basename(target);
-      recordOrigin(got, '', '');
-      LFILE.files('DL import (legacy) ' + n + ' -> ' + got);
-      moved++;
-    } catch (e) { L.warn('cannot import legacy download', n, e.message); }
+    if (n.startsWith('.') || /\.crdownload$/i.test(n)) continue;
+    if (adoptChromeDownload(n, '', '', { report: false })) moved++;
   }
-  if (moved) L.info('imported ' + moved + ' legacy download(s) into MyFiles');
+  if (moved) L.info('imported ' + moved + ' download(s) into MyFiles');
 }
 
 // Force JS popups (window.open called WITH a features/geometry argument, e.g.
@@ -1461,6 +1539,8 @@ cdpPoll();
 setInterval(cdpBrowserMonitor, BROWSER_CDP_POLL_MS).unref();
 cdpBrowserMonitor();
 importLegacyDownloads();
+setInterval(watchChromeFolder, CHROME_DL_WATCH_MS).unref();
+watchChromeFolder();
 
 server.on('upgrade', handleUpgrade);
 

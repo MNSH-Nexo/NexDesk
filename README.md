@@ -76,7 +76,8 @@ command to install and one to remove — nothing opaque, nothing cloud-locked.
   in the Files panel with a live progress row, downloads to your own machine,
   deletes like any other file, and can be picked in another site's "choose file"
   dialog without being uploaded again. Each row is labelled with where it came
-  from — your device, or the site that produced the download.
+  from — your device, or the site that produced the download — and a download is
+  never lost to a dropped connection: it is recovered into the folder by itself.
 - **Uploads without a Linux dialog** — when a site inside the virtual browser asks
   for a file, NexDesk intercepts Chrome's file chooser and delivers the file you
   pick straight into the page. No remote file window ever opens, and nothing is
@@ -452,7 +453,10 @@ The shared file folder lives outside the install directory, at
 computer, and ones the virtual browser downloads for you — so a downloaded file
 is immediately visible in the Files panel, downloadable to your device,
 deletable, and selectable in any site's "choose file" dialog without a second
-upload.
+upload. Chrome is told to save its downloads directly into that folder; the folder
+it falls back to is watched as well, so a finished download that ends up there is
+brought in automatically. Either way a file you download inside the virtual
+browser turns up in the Files panel, even if the browser link drops.
 
 ---
 
@@ -477,9 +481,10 @@ upload.
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `MYFILES_DIR` | `/home/nexdesk/MyFiles` | Shared folder for uploads and virtual-browser downloads |
 | `MYFILES_MAX_MB` | `2048` | Largest single upload, in MiB |
-| `CHROME_DL_IMPORT_DIR` | `/home/nexdesk/Downloads` | Old Chrome download folder, moved into `MYFILES_DIR` once at start |
+| `CHROME_DL_IMPORT_DIR` | `/home/nexdesk/Downloads` | Chrome's own download folder; anything that finishes there is moved into `MYFILES_DIR` |
+| `CHROME_DL_WATCH_MS` | `1500` | How often Chrome's own download folder is checked for a finished download |
 | `CDP_HTTP` | `http://127.0.0.1:9223` | Chrome DevTools endpoint used for the download folder and file injection |
-| `BROWSER_CDP_POLL_MS` | `5000` | How often the browser-level DevTools link is re-checked |
+| `BROWSER_CDP_POLL_MS` | `5000` | How often the browser-level DevTools link is health-checked and rebuilt if it stops answering |
 
 ### Browser (`bin/nexdesk-browser.sh`)
 
