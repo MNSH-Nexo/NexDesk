@@ -70,6 +70,17 @@ command to install and one to remove — nothing opaque, nothing cloud-locked.
   to timing attacks.
 - **Persistent Chrome profile** — tabs, logins and settings are stored on the
   server and reload on every connection.
+- **One shared file folder** — upload a file from your computer and it lands in a
+  single server-side folder you can also open inside the virtual desktop. Anything
+  the virtual browser *downloads* is saved into that same folder, so it shows up
+  in the Files panel with a live progress row, downloads to your own machine,
+  deletes like any other file, and can be picked in another site's "choose file"
+  dialog without being uploaded again. Each row is labelled with where it came
+  from — your device, or the site that produced the download.
+- **Uploads without a Linux dialog** — when a site inside the virtual browser asks
+  for a file, NexDesk intercepts Chrome's file chooser and delivers the file you
+  pick straight into the page. No remote file window ever opens, and nothing is
+  re-uploaded from your device.
 - **Full-screen noVNC viewer** — an immersive remote desktop inside your browser,
   with zoom/fit toggles and a dark frame, ready for desktop and mobile.
 - **Near-real-time sound** — the virtual Chrome's audio is routed through a local
@@ -431,9 +442,17 @@ Runtime secrets and data are generated under the install directory and are
 │   ├── webpath.txt         # secret URL path
 │   └── tls/                # self-signed key + certificate
 ├── .secret                 # HMAC signing secret
-├── .chrome/                # live Chrome profile (sessions, logins, downloads)
+├── .chrome/                # live Chrome profile (sessions, logins, settings)
 └── logs/                   # installer + service logs
 ```
+
+The shared file folder lives outside the install directory, at
+`/home/nexdesk/MyFiles` (owned by the `nexdesk` user; configurable with
+`MYFILES_DIR`). Both kinds of file meet there — ones you upload from your own
+computer, and ones the virtual browser downloads for you — so a downloaded file
+is immediately visible in the Files panel, downloadable to your device,
+deletable, and selectable in any site's "choose file" dialog without a second
+upload.
 
 ---
 
@@ -456,6 +475,11 @@ Runtime secrets and data are generated under the install directory and are
 | `VIEWER_FILE` | `.../viewer.html` | Viewer HTML |
 | `NEXDESK_DISPLAY` | `:99` | Virtual display for clipboard/keyboard |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `MYFILES_DIR` | `/home/nexdesk/MyFiles` | Shared folder for uploads and virtual-browser downloads |
+| `MYFILES_MAX_MB` | `2048` | Largest single upload, in MiB |
+| `CHROME_DL_IMPORT_DIR` | `/home/nexdesk/Downloads` | Old Chrome download folder, moved into `MYFILES_DIR` once at start |
+| `CDP_HTTP` | `http://127.0.0.1:9223` | Chrome DevTools endpoint used for the download folder and file injection |
+| `BROWSER_CDP_POLL_MS` | `5000` | How often the browser-level DevTools link is re-checked |
 
 ### Browser (`bin/nexdesk-browser.sh`)
 
@@ -486,6 +510,13 @@ root — returns `404 Not found`.
 | `/clipboard` | POST | cookie | Write text into the remote clipboard |
 | `/api/stats` | GET | cookie | Host and per-process CPU/RAM (top-bar meter) |
 | `/api/link` | GET | cookie | Live delivered throughput (kbps) and round-trip (ms) that drive Auto quality |
+| `/api/files` | GET | cookie | List the shared folder (name, size, and where each file came from) |
+| `/api/files?name=` | PUT | cookie | Upload a file (streamed, then atomically renamed into place) |
+| `/api/files/:name` | DELETE | cookie | Delete a file |
+| `/api/files/:name/download` | GET | cookie | Download a file to your own device |
+| `/api/downloads` | GET | cookie | Downloads in progress or just finished in the virtual browser, with progress and origin site |
+| `/api/chooser` | GET / POST | cookie | Whether a site is asking for a file, and delivering the file you chose to it |
+| `/api/version` | GET | cookie | Running build version (drives the viewer's self-refresh) |
 
 ---
 

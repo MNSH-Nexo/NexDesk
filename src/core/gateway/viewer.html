@@ -378,6 +378,30 @@
   .ficon.t-slides{background:linear-gradient(135deg,#ff8a65,#e05c36)}
   .ficon.t-text{background:linear-gradient(135deg,#9aa0c4,#6b7199)}
   .ficon.t-file{background:linear-gradient(135deg,#4a4f6b,#2f3350)}
+  /* ---------- where a file came from ---------- */
+  .fsrc{display:inline-block;margin-top:4px;font-size:10px;font-weight:700;letter-spacing:.2px;padding:1px 6px;border-radius:6px;
+        border:1px solid rgba(255,255,255,.14);color:var(--ink-dim);max-width:100%;overflow:hidden;
+        text-overflow:ellipsis;white-space:nowrap;vertical-align:top}
+  .fsrc.mine{color:#9fe7c6;border-color:rgba(62,207,142,.35);background:rgba(62,207,142,.1)}
+  .fsrc.web{color:#a9d8ff;border-color:rgba(57,208,255,.35);background:rgba(57,208,255,.1)}
+  /* ---------- live downloads coming out of the virtual browser ---------- */
+  .dl-wrap{margin-top:11px}
+  .dl-list{display:flex;flex-direction:column;gap:6px}
+  .dl-item{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:10px;
+           background:rgba(57,208,255,.07);border:1px solid rgba(57,208,255,.22)}
+  .dl-item.done{background:rgba(62,207,142,.08);border-color:rgba(62,207,142,.3)}
+  .dl-item.err{background:rgba(255,107,107,.07);border-color:rgba(255,107,107,.26)}
+  .dl-meta{flex:1;min-width:0}
+  .dl-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dl-sub{font-size:10.5px;color:var(--ink-dim);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dl-bar{height:4px;border-radius:3px;background:rgba(255,255,255,.1);overflow:hidden;margin-top:6px}
+  .dl-fill{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--brand2),var(--ok));transition:width .2s linear}
+  .dl-item.done .dl-fill{width:100%!important}
+  .dl-pct{flex:none;font-size:11px;font-variant-numeric:tabular-nums;color:var(--ink-dim);min-width:34px;text-align:right}
+  .chooser-src{display:inline-block;margin-left:7px;font-size:9.5px;font-weight:700;padding:1px 5px;border-radius:5px;
+        border:1px solid rgba(255,255,255,.14);color:var(--ink-dim);vertical-align:middle;white-space:nowrap}
+  .chooser-src.mine{color:#9fe7c6;border-color:rgba(62,207,142,.35);background:rgba(62,207,142,.1)}
+  .chooser-src.web{color:#a9d8ff;border-color:rgba(57,208,255,.35);background:rgba(57,208,255,.1)}
   /* ---------- Upload-injection chooser (instead of the Linux file dialog) ---------- */
   .chooser{position:fixed;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;padding:16px;
           background:rgba(5,5,12,.62);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
@@ -569,7 +593,7 @@
           <div class="files-mark"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
           <div style="min-width:0">
             <div class="files-name">My Files</div>
-            <div class="files-sub">Upload from your computer — files land in a folder you can open inside the virtual browser.</div>
+            <div class="files-sub">Files from your computer and files the virtual browser downloads — one folder, ready to download, delete, or send to a site.</div>
           </div>
         </div>
         <button class="files-close" id="filesClose" title="Close" aria-label="Close">&times;</button>
@@ -582,6 +606,10 @@
           <input type="file" id="fileInput" multiple hidden>
         </div>
         <div id="upList" class="up-list"></div>
+        <div id="dlWrap" class="dl-wrap hidden">
+          <div class="fl-head"><span>Downloading in the virtual browser</span></div>
+          <div id="dlList" class="dl-list"></div>
+        </div>
         <div class="files-divider"></div>
         <div class="fl-head"><span>On the server</span>
           <button class="fl-refresh" id="flRefresh" title="Refresh list" aria-label="Refresh"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg></button>
@@ -592,7 +620,7 @@
           <div class="et">No files yet</div>
           <div class="es">Drop a file above to move it from your computer into your virtual browser.</div>
         </div>
-        <div class="files-foot">Tip: when a site in the virtual browser asks for a file, upload or pick it here — it’s delivered straight into the page (no Linux dialog).</div>
+        <div class="files-foot">Tip: files the virtual browser downloads land here too. Pick any of them in a site’s “choose file” dialog and it’s delivered straight into the page — no Linux dialog, no second upload.</div>
       </div>
     </div>
   </div>
@@ -607,7 +635,7 @@
         <div class="chooser-mark"><svg viewBox="0 0 24 24"><path d="M12 16V7M8 11l4-4 4 4"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg></div>
         <div style="min-width:0">
           <div class="chooser-name">Send a file to this site</div>
-          <div class="chooser-sub">The website in your virtual browser is asking for a file. Pick one below — it’s delivered straight in (no Linux dialog).</div>
+          <div class="chooser-sub">The website in your virtual browser is asking for a file. Pick one below — including files the virtual browser just downloaded — and it’s delivered straight in (no Linux dialog).</div>
         </div>
       </div>
       <button class="files-close" id="chooserClose" title="Cancel" aria-label="Cancel">&times;</button>
@@ -1473,7 +1501,14 @@
       const nm = document.createElement('div'); nm.className = 'fname'; nm.textContent = f.name; nm.title = f.name;
       const info = document.createElement('div'); info.className = 'finfo';
       info.textContent = (f.sizeLabel || '') + (f.mtime ? '  ·  ' + fmtDate(f.mtime) : '');
-      meta.appendChild(nm); meta.appendChild(info);
+      const fromBrowser = (f.source === 'browser');
+      const src = document.createElement('div');
+      src.className = 'fsrc ' + (fromBrowser ? 'web' : 'mine');
+      src.textContent = fromBrowser
+        ? ('Downloaded' + (f.site ? ' from ' + f.site : ' in the virtual browser'))
+        : 'From my device';
+      src.title = src.textContent;
+      meta.appendChild(nm); meta.appendChild(info); meta.appendChild(src);
       const acts = document.createElement('div'); acts.className = 'factions';
       const dl = document.createElement('button'); dl.className = 'fbtn dl'; dl.title = 'Download';
       dl.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 4v11M8 11l4 4 4-4"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>';
@@ -1570,6 +1605,80 @@
     filesOpen = false; filesPanel.classList.add('hidden');
   });
 
+  // ---- Live downloads from the virtual browser ----
+  // Anything the virtual browser saves is written into MyFiles, so it shows up in
+  // the list above like any other file. This part just makes it feel live: a
+  // progress row while Chrome is fetching, and one heads-up (plus a list refresh)
+  // the moment a new file has finished landing.
+  const dlWrap = $('dlWrap'), dlList = $('dlList');
+  let dlKnown = null, dlPolling = false;
+  function humanBytesLocal(b){
+    if (!Number.isFinite(b) || b < 0) return '–';
+    if (b < 1024) return b + ' B';
+    const u = ['KB','MB','GB','TB']; let v = b, i = -1;
+    do { v /= 1024; i++; } while (v >= 1024 && i < u.length - 1);
+    return (v >= 100 ? Math.round(v) : Math.round(v * 10) / 10) + ' ' + u[i];
+  }
+  function dlSub(d){
+    if (d.state === 'canceled') return 'Download stopped';
+    if (d.state === 'completed') return 'Saved to My Files';
+    const parts = [];
+    if (d.site) parts.push(d.site);
+    parts.push(d.total ? humanBytesLocal(d.received) + ' of ' + humanBytesLocal(d.total)
+                       : humanBytesLocal(d.received));
+    return parts.join('  ·  ');
+  }
+  function renderDownloads(list){
+    const rows = list.filter((d)=> d.state === 'inProgress' || (Date.now() - d.at) < 9000);
+    if (!rows.length){ dlWrap.classList.add('hidden'); dlList.innerHTML = ''; return; }
+    dlWrap.classList.remove('hidden');
+    dlList.innerHTML = '';
+    for (const d of rows){
+      const item = document.createElement('div');
+      item.className = 'dl-item' + (d.state === 'completed' ? ' done' : (d.state === 'canceled' ? ' err' : ''));
+      const meta = document.createElement('div'); meta.className = 'dl-meta';
+      const nm = document.createElement('div'); nm.className = 'dl-name';
+      nm.textContent = d.name || 'download'; nm.title = d.name || '';
+      const sub = document.createElement('div'); sub.className = 'dl-sub'; sub.textContent = dlSub(d);
+      const bar = document.createElement('div'); bar.className = 'dl-bar';
+      const fill = document.createElement('i'); fill.className = 'dl-fill';
+      fill.style.width = (d.state === 'completed' ? 100 : (d.percent != null ? Math.max(3, d.percent) : 10)) + '%';
+      bar.appendChild(fill);
+      meta.appendChild(nm); meta.appendChild(sub); meta.appendChild(bar);
+      const pct = document.createElement('div'); pct.className = 'dl-pct';
+      pct.textContent = d.state === 'completed' ? 'Done'
+                      : (d.state === 'canceled' ? 'Stopped' : (d.percent != null ? d.percent + '%' : ''));
+      item.appendChild(meta); item.appendChild(pct);
+      dlList.appendChild(item);
+    }
+  }
+  async function pollDownloads(){
+    if (dlPolling) return; dlPolling = true;
+    try{
+      const r = await fetch(apiUrl('/downloads'), { headers:{ 'Accept':'application/json' }, credentials:'same-origin' });
+      if (r.ok){
+        const d = await r.json();
+        const list = (d && d.downloads) || [];
+        renderDownloads(list);
+        const done = new Set(list.filter((x)=> x.state === 'completed').map((x)=> x.guid));
+        // The first pass only records what is already there, so simply opening the
+        // viewer never replays a toast for a download the visitor already knows about.
+        if (dlKnown){
+          const fresh = [...done].filter((g)=> !dlKnown.has(g));
+          if (fresh.length){
+            const it = list.find((x)=> x.guid === fresh[fresh.length - 1]);
+            if (it) toast('Downloaded' + (it.site ? ' from ' + it.site : '') + ': ' + it.name + ' — saved to My Files.');
+            if (filesOpen) loadFiles();
+            if (chooserActive) refreshChooserList();
+          }
+        }
+        dlKnown = done;
+      }
+    }catch(e){} finally{ dlPolling = false; }
+  }
+  setInterval(pollDownloads, 1500);
+  pollDownloads();
+
   // ==========================================================================
   // Upload-injection chooser — when a website inside the virtual browser asks
   // for a file, we intercept Chrome's dialog (server-side) and instead let you
@@ -1601,8 +1710,15 @@
         const row = document.createElement('div'); row.className = 'chooser-row';
         const ic = document.createElement('div'); ic.className = 'chooser-ic'; ic.textContent = iconLabel(f.name);
         const meta = document.createElement('div'); meta.className = 'chooser-meta';
-        const nm = document.createElement('div'); nm.className = 'chooser-nm'; nm.textContent = f.name; nm.title = f.name;
-        const sz = document.createElement('div'); sz.className = 'chooser-sz'; sz.textContent = f.sizeLabel || '';
+        const fromBrowser = (f.source === 'browser');
+        const nm = document.createElement('div'); nm.className = 'chooser-nm';
+        nm.textContent = f.name; nm.title = f.name;
+        const tag = document.createElement('span');
+        tag.className = 'chooser-src ' + (fromBrowser ? 'web' : 'mine');
+        tag.textContent = fromBrowser ? 'from virtual browser' : 'from my device';
+        nm.appendChild(tag);
+        const sz = document.createElement('div'); sz.className = 'chooser-sz';
+        sz.textContent = (f.sizeLabel || '') + (fromBrowser && f.site ? '  ·  ' + f.site : '');
         meta.appendChild(nm); meta.appendChild(sz);
         const pick = document.createElement('button'); pick.className = 'chooser-pick'; pick.textContent = 'Send';
         pick.addEventListener('click', async (ev) => { ev.stopPropagation(); await chooseForSite(f.name); });

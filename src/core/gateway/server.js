@@ -44,6 +44,13 @@ const MYFILES_DIR = process.env.MYFILES_DIR || '/home/nexdesk/MyFiles';
 const MYFILES_MAX_UPLOAD = parseInt(process.env.MYFILES_MAX_MB || '2048', 10) * 1024 * 1024; // default 2 GiB per file
 const LOG_DIR = process.env.LOG_DIR || '/opt/nexdesk/logs';
 
+// The virtual browser's own downloads are saved into this same folder (see the
+// browser-level CDP link further down), so a file a website hands the visitor
+// lands where they can already see it, download it, delete it — and hand it to
+// another site's upload dialog without uploading it a second time.
+const MYFILES_ORIGINS_FILE = path.join(MYFILES_DIR, '.nx-origins.json');
+const CHROME_DL_IMPORT_DIR = process.env.CHROME_DL_IMPORT_DIR || '/home/nexdesk/Downloads';
+
 // ---- Live audio bridge (virtual desktop sound -> visitor's browser) ----
 // PulseAudio (run by nexdesk-audio.service) exposes the mixed desktop sound on
 // a monitor source. The gateway spawns one `parec` capture per listening viewer
@@ -145,6 +152,7 @@ function safeFileName(name){
   let n = name.replace(/\\/g, '/').split('/').pop() || '';
   n = n.replace(/[\u0000-\u001f\u007f]/g, '').trim();
   if (!n || n === '.' || n === '..' || n === '/' || n.length > 255) return null;
+  if (n.startsWith('.nx-')) return null;   // reserved for NexDesk's own bookkeeping
   // reject absolute-ish and traversal leftovers after basename split
   if (n.includes('/') || n.includes('\0')) return null;
   return n;
@@ -166,15 +174,23 @@ function sweepOrphanParts(){
   try {
     const now = Date.now();
     for (const f of fs.readdirSync(MYFILES_DIR)) {
-      if (!/^\.nx-upload-.*\.part$/.test(f)) continue;
+      const internal = /^\.nx-upload-.*\.part$/.test(f);
+      const partial  = /\.crdownload$/i.test(f);
+      if (!internal && !partial) continue;
       try {
         const full = path.join(MYFILES_DIR, f);
-        if (now - fs.statSync(full).mtimeMs > 60000) fs.unlinkSync(full);
+        const age = now - fs.statSync(full).mtimeMs;
+        // A dropped NexDesk upload is safely stale after a minute; a Chrome
+        // ".crdownload" partial only after two hours, so a big slow download
+        // is never deleted underneath the browser.
+        if (internal && age > 60000) fs.unlinkSync(full);
+        else if (partial && age > 2 * 3600000) fs.unlinkSync(full);
       } catch (e) {}
     }
   } catch (e) {}
 }
 sweepOrphanParts();
+setInterval(sweepOrphanParts, 10 * 60 * 1000).unref();
 const TYPE_BY_EXT = {
   '.png': 'image','.jpg':'image','.jpeg':'image','.gif':'image','.webp':'image','.svg':'image','.bmp':'image','.ico':'image','.avif':'image','.heic':'image',
   '.mp4':'video','.webm':'video','.mkv':'video','.mov':'video','.avi':'video','.m4v':'video','.mpg':'video','.mpeg':'video',
@@ -189,11 +205,18 @@ function fileTypeIcon(name){
 function listMyFiles(){
   if (!ensureMyFiles()) return [];
   try {
-    return fs.readdirSync(MYFILES_DIR).filter((f) => !f.startsWith('.')).map((f) => {
-      let st = null; try { st = fs.statSync(path.join(MYFILES_DIR, f)); } catch (e) {}
-      if (!st || st.isDirectory()) return null;
-      return { name: f, size: st.size, mtime: st.mtimeMs, type: fileTypeIcon(f) };
-    }).filter(Boolean).sort((a, b) => b.mtime - a.mtime);
+    return fs.readdirSync(MYFILES_DIR)
+      .filter((f) => !f.startsWith('.') && !/\.crdownload$/i.test(f))
+      .map((f) => {
+        let st = null; try { st = fs.statSync(path.join(MYFILES_DIR, f)); } catch (e) {}
+        if (!st || st.isDirectory()) return null;
+        const o = fileOrigins[f];
+        return {
+          name: f, size: st.size, mtime: st.mtimeMs, type: fileTypeIcon(f),
+          source: (o && o.source) || 'device',
+          site: (o && o.site) || '',
+        };
+      }).filter(Boolean).sort((a, b) => b.mtime - a.mtime);
   } catch (e) { L.error('listMyFiles error', e.message); return []; }
 }
 function humanBytes(b){
@@ -203,6 +226,35 @@ function humanBytes(b){
   do { v /= 1024; i++; } while (v >= 1024 && i < u.length - 1);
   return (v >= 100 ? Math.round(v) : Math.round(v * 10) / 10) + ' ' + u[i];
 }
+
+// ---- Where each file came from ----
+// The Files panel shows a single list for both kinds of file: ones the visitor
+// uploaded from their computer, and ones a website in the virtual browser
+// downloaded for them. A small JSON sidecar remembers the latter (and the site
+// that produced it) so the label survives a restart; anything untracked is
+// simply a device upload.
+let fileOrigins = {};
+function loadOrigins(){
+  try {
+    const j = JSON.parse(fs.readFileSync(MYFILES_ORIGINS_FILE, 'utf8'));
+    if (j && typeof j === 'object' && !Array.isArray(j)) fileOrigins = j;
+  } catch (e) { /* no sidecar yet — treat every file as a device upload */ }
+}
+function saveOrigins(){
+  try { fs.writeFileSync(MYFILES_ORIGINS_FILE, JSON.stringify(fileOrigins), { mode: 0o644 }); }
+  catch (e) { L.warn('cannot persist file origins', e.message); }
+}
+function recordOrigin(name, site, url){
+  if (!name) return;
+  fileOrigins[name] = { source: 'browser', site: site || '', url: url || '', at: Date.now() };
+  const keys = Object.keys(fileOrigins);
+  if (keys.length > 500) for (const k of keys.slice(0, keys.length - 500)) delete fileOrigins[k];
+  saveOrigins();
+}
+function forgetOrigin(name){
+  if (name && fileOrigins[name]){ delete fileOrigins[name]; saveOrigins(); }
+}
+loadOrigins();
 
 const app = express();
 const server = http.createServer(app);
@@ -589,6 +641,7 @@ router.get('/api/files', (req, res) => {
   if (!authed(req)) return res.status(401).json({ ok:false, error:'unauthorized' });
   const files = listMyFiles().map((f) => ({
     name: f.name, size: f.size, sizeLabel: humanBytes(f.size), mtime: f.mtime, type: f.type,
+    source: f.source || 'device', site: f.site || '',
   }));
   LFILE.files('LIST ok from ' + (req.socket.remoteAddress || '?') + ' -> ' + files.length + ' files');
   L.debug('api/files', files.length, 'files');
@@ -650,6 +703,7 @@ router.delete('/api/files/:name', (req, res) => {
   if (!rel) return res.status(400).json({ ok:false, error:'invalid name' });
   try {
     fs.unlinkSync(rel.full);
+    forgetOrigin(rel.rel);
     LFILE.files('DELETE ok name=' + rel.rel + ' from ' + (req.socket.remoteAddress || '?'));
     L.info('file deleted', rel.rel);
     return res.json({ ok:true });
@@ -674,6 +728,29 @@ router.get('/api/files/:name/download', (req, res) => {
   LFILE.files('DOWNLOAD name=' + rel.rel + ' size=' + st.size + ' from ' + (req.socket.remoteAddress || '?'));
   L.debug('file download', rel.rel);
   fs.createReadStream(rel.full).pipe(res);
+});
+
+// ---- Live browser downloads ----
+// What the virtual browser is fetching right now, plus anything that just
+// finished. Chrome saves straight into MyFiles, so a completed item is already
+// in the Files list by the time the viewer looks; this endpoint exists so the
+// panel can show progress live and tell the visitor the moment a new file lands.
+router.get('/api/downloads', (req, res) => {
+  if (!authed(req)) return res.status(401).json({ ok:false, error:'unauthorized' });
+  if (!browserWs) cdpBrowserMonitor();     // a dropped link self-heals on the next poll
+  pruneDownloads();
+  const items = Array.from(downloads.values()).map((d) => ({
+    guid: d.guid,
+    name: d.filename,
+    site: d.site,
+    state: d.done ? d.state : 'inProgress',
+    received: d.received,
+    total: d.total,
+    sizeLabel: humanBytes(d.received),
+    percent: d.total ? Math.min(100, Math.round((d.received / d.total) * 100)) : null,
+    at: d.finishedAt || d.startedAt,
+  })).sort((a, b) => b.at - a.at);
+  res.json({ ok:true, dir: MYFILES_DIR, downloads: items.slice(0, 20) });
 });
 
 // ---- noVNC static assets (under BASE) ----
@@ -999,6 +1076,168 @@ function handleUpgrade(req, socket, head) {
 const CDP_HTTP    = process.env.CHROME_CDP_HTTP || 'http://127.0.0.1:9223';
 const CDP_POLL_MS = parseInt(process.env.CDP_POLL_MS || '2000', 10);
 const CHOOSER_TTL_MS = parseInt(process.env.CHOOSER_TTL_MS || '180000', 10);
+const BROWSER_CDP_POLL_MS = parseInt(process.env.BROWSER_CDP_POLL_MS || '5000', 10);
+const DOWNLOAD_TAIL_MS = parseInt(process.env.DOWNLOAD_TAIL_MS || '30000', 10);
+
+// ===================== Browser-level CDP: download destination =====================
+// A second, browser-scoped DevTools link (the ones above are per tab) tells Chrome
+// where to save the files the visitor downloads inside the virtual browser, and
+// reports each download's progress. Saving them into MyFiles closes the loop: the
+// file a site handed them shows up in the Files panel, downloads to their own
+// computer, deletes like any other, and can be fed to another site's upload
+// dialog without being uploaded twice.
+const downloads = new Map();   // guid -> { guid, filename, url, site, state, received, total, ... }
+const browserReqs = new Map();
+let browserWs = null, browserSeq = 4000, browserConnecting = false;
+
+function pruneDownloads(){
+  const now = Date.now();
+  for (const [g, d] of downloads){
+    if (d.done ? now - (d.finishedAt || d.startedAt) > DOWNLOAD_TAIL_MS
+               : now - d.startedAt > 30 * 60 * 1000) downloads.delete(g);
+  }
+}
+function downloadSite(url){
+  try { return String(new URL(url).hostname || '').replace(/^www\./, ''); } catch (e) { return ''; }
+}
+function snapshotMyFiles(){
+  try { return new Set(fs.readdirSync(MYFILES_DIR)); } catch (e) { return new Set(); }
+}
+// Chrome appends " (1)", " (2)"… when a name is taken, so the suggested name is
+// not always the name on disk. Compare the folder before/after the download to
+// learn the file that actually landed, and label that one.
+function resolveFinishedName(d){
+  const before = d.before || new Set();
+  let now = [];
+  try { now = fs.readdirSync(MYFILES_DIR); } catch (e) { return d.filename; }
+  const fresh = now.filter((n) => !before.has(n) && !/\.crdownload$/i.test(n) && !n.startsWith('.'));
+  if (!fresh.length) return d.filename;
+  if (fresh.length === 1) return fresh[0];
+  const stem = String(d.filename || '').replace(/\.[^.]*$/, '').toLowerCase();
+  const near = fresh.filter((n) => n.toLowerCase().startsWith(stem));
+  return (near.length ? near : fresh).sort()[0];
+}
+function onDownloadWillBegin(p){
+  if (!p || !p.guid) return;
+  downloads.set(p.guid, {
+    guid: p.guid, filename: p.suggestedFilename || 'download',
+    url: p.url || '', site: downloadSite(p.url),
+    state: 'inProgress', received: 0, total: null,
+    startedAt: Date.now(), done: false, before: snapshotMyFiles(),
+  });
+  LFILE.files('DL begin guid=' + p.guid + ' file=' + p.suggestedFilename + ' site=' + downloadSite(p.url));
+  L.info('browser download started', p.suggestedFilename, downloadSite(p.url));
+}
+function onDownloadProgress(p){
+  const d = p && downloads.get(p.guid);
+  if (!d) return;
+  if (typeof p.receivedBytes === 'number') d.received = p.receivedBytes;
+  if (typeof p.totalBytes === 'number') d.total = p.totalBytes;
+  if (p.state === 'completed'){
+    d.state = 'completed'; d.done = true; d.finishedAt = Date.now();
+    d.filename = resolveFinishedName(d);
+    delete d.before;
+    if (d.total == null) d.total = d.received;
+    recordOrigin(d.filename, d.site, d.url);
+    LFILE.files('DL complete guid=' + d.guid + ' file=' + d.filename + ' bytes=' + d.received);
+    L.info('browser download complete', d.filename, d.received, 'bytes');
+    pruneDownloads();
+  } else if (p.state === 'canceled'){
+    d.state = 'canceled'; d.done = true; d.finishedAt = Date.now();
+    delete d.before;
+    L.warn('browser download canceled', d.filename);
+    pruneDownloads();
+  }
+}
+function browserCommand(method, params){
+  return new Promise((resolve) => {
+    if (!browserWs || browserWs.readyState !== WebSocket.OPEN){ resolve({ error:{ message:'no browser target' } }); return; }
+    const id = ++browserSeq;
+    const timer = setTimeout(() => { browserReqs.delete(id); resolve({ error:{ message:'cdp timeout' } }); }, 6000);
+    browserReqs.set(id, (m) => { clearTimeout(timer); resolve(m); });
+    try { browserWs.send(JSON.stringify({ id, method, params: params || {} })); }
+    catch (e) { clearTimeout(timer); browserReqs.delete(id); resolve({ error:{ message:'cdp send failed' } }); }
+  });
+}
+// Point Chrome's downloads at MyFiles. Re-applied on every (re)connect, so a
+// browser restart is picked up by itself and the folder can never drift.
+async function browserSetDownloadDir(){
+  if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
+  if (!ensureMyFiles()) return;
+  const r = await browserCommand('Browser.setDownloadBehavior',
+    { behavior: 'allow', downloadPath: MYFILES_DIR, eventsEnabled: true });
+  if (r && r.error){
+    L.warn('could not set browser download folder', r.error.message);
+    // Older Chrome only exposes the per-page variant (also set per tab below).
+    for (const page of cdp.pages.values()){
+      if (page.ws && page.ws.readyState === WebSocket.OPEN)
+        cdpCommand(page, 'Page.setDownloadBehavior', { behavior: 'allow', downloadPath: MYFILES_DIR }, 5000);
+    }
+  } else {
+    LFILE.files('DL destination = ' + MYFILES_DIR);
+    L.info('browser downloads -> ' + MYFILES_DIR);
+  }
+}
+async function cdpBrowserMonitor(){
+  if (browserConnecting) return;
+  if (browserWs && browserWs.readyState === WebSocket.OPEN) return;
+  browserConnecting = true;
+  try {
+    const info = await cdpJson('/json/version');
+    const url = info && info.webSocketDebuggerUrl;
+    if (!url || !/^ws/.test(url)) return;
+    let ws;
+    try { ws = new WebSocket(url); } catch (e) { return; }
+    await new Promise((resolve) => {
+      const give = setTimeout(resolve, 6000);
+      ws.on('open', () => { clearTimeout(give); resolve(); });
+      ws.on('error', () => { clearTimeout(give); resolve(); });
+      ws.on('close', () => { clearTimeout(give); resolve(); });
+    });
+    if (ws.readyState !== WebSocket.OPEN){ try { ws.close(); } catch (e) {} return; }
+    browserWs = ws;
+    ws.on('message', (data) => {
+      let m = null; try { m = JSON.parse(String(data)); } catch (e) { return; }
+      if (m && m.id && browserReqs.has(m.id)){ const fn = browserReqs.get(m.id); browserReqs.delete(m.id); fn(m); return; }
+      if (m && m.method === 'Browser.downloadWillBegin') onDownloadWillBegin(m.params);
+      else if (m && m.method === 'Browser.downloadProgress') onDownloadProgress(m.params);
+    });
+    ws.on('close', () => { if (browserWs === ws) browserWs = null; });
+    ws.on('error', () => { try { ws.close(); } catch (e) {} });
+    L.debug('cdp browser target attached');
+    await browserSetDownloadDir();
+  } finally { browserConnecting = false; }
+}
+// Courtesy one-time import: earlier NexDesk builds let Chrome save downloads to
+// its own default folder, so any file still there is moved into MyFiles (never
+// overwriting) to keep the two in step. A no-op once that folder is empty.
+function importLegacyDownloads(){
+  if (!ensureMyFiles()) return;
+  if (path.resolve(CHROME_DL_IMPORT_DIR) === path.resolve(MYFILES_DIR)) return;
+  let names = [];
+  try { names = fs.readdirSync(CHROME_DL_IMPORT_DIR); } catch (e) { return; }
+  let moved = 0;
+  for (const n of names){
+    const clean = safeFileName(n);
+    if (!clean) continue;
+    const from = path.join(CHROME_DL_IMPORT_DIR, n);
+    try {
+      const st = fs.statSync(from);
+      if (!st.isFile()) continue;
+      const dot = clean.lastIndexOf('.');
+      const base = dot > 0 ? clean.slice(0, dot) : clean;
+      const ext = dot > 0 ? clean.slice(dot) : '';
+      let target = path.join(MYFILES_DIR, clean), i = 1;
+      while (fs.existsSync(target)) target = path.join(MYFILES_DIR, base + ' (' + (i++) + ')' + ext);
+      fs.renameSync(from, target);
+      const got = path.basename(target);
+      recordOrigin(got, '', '');
+      LFILE.files('DL import (legacy) ' + n + ' -> ' + got);
+      moved++;
+    } catch (e) { L.warn('cannot import legacy download', n, e.message); }
+  }
+  if (moved) L.info('imported ' + moved + ' legacy download(s) into MyFiles');
+}
 
 // Force JS popups (window.open called WITH a features/geometry argument, e.g.
 // the sign-in windows that Google / X / Apple open) to become a NEW TAB inside
@@ -1192,6 +1431,9 @@ async function cdpPoll(){
         ws.send(JSON.stringify({ id: ++rec.seq, method: 'Page.enable' }));
         ws.send(JSON.stringify({ id: ++rec.seq, method: 'Runtime.enable' }));
         ws.send(JSON.stringify({ id: ++rec.seq, method: 'Page.setInterceptFileChooserDialog', params: { enabled: true } }));
+        // Belt and braces with the browser-level setting: some Chrome builds
+        // only honour the per-page variant of the download folder.
+        ws.send(JSON.stringify({ id: ++rec.seq, method: 'Page.setDownloadBehavior', params: { behavior: 'allow', downloadPath: MYFILES_DIR } }));
         // Popups -> tabs on every page (patches the live doc + all future docs).
         ws.send(JSON.stringify({ id: ++rec.seq, method: 'Page.addScriptToEvaluateOnNewDocument', params: { source: SHIM_POPUPS_TO_TABS } }));
         ws.send(JSON.stringify({ id: ++rec.seq, method: 'Runtime.evaluate', params: { expression: SHIM_POPUPS_TO_TABS, returnByValue: true } }));
@@ -1216,6 +1458,9 @@ async function cdpPoll(){
 }
 setInterval(cdpPoll, CDP_POLL_MS).unref();
 cdpPoll();
+setInterval(cdpBrowserMonitor, BROWSER_CDP_POLL_MS).unref();
+cdpBrowserMonitor();
+importLegacyDownloads();
 
 server.on('upgrade', handleUpgrade);
 
