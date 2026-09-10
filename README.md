@@ -288,6 +288,17 @@ Flags and their equivalent environment overrides:
 | — | `NX_SWAP` | `auto` | `off` to never touch swap |
 | — | `NX_SWAPFILE` | `/swapfile` | Custom swap file path |
 | — | `NX_SRC_URL` | (GitHub) | Custom source archive URL |
+| — | `NX_TZ` | `auto` | Follow the server's location; `off` keeps the current clock |
+
+> **The server clock follows the server.** Chrome shows the host's time zone to
+> every site it visits, so a machine hosted in one country while its clock says
+> UTC is an easy mismatch to spot. At install and update time NexDesk asks a
+> location service where the machine is and aligns the system time zone with it,
+> before the browser starts, and a small daily check repeats the same step so a
+> server that is moved later corrects itself. The change is skipped entirely when
+> the zone is already right, and it is never guessed: if the lookup fails the
+> current setting is kept. Use `NX_TZ=off` to leave the clock alone, or pin a
+> zone with `NX_TZ=Europe/Berlin`.
 
 ### What the installer does
 

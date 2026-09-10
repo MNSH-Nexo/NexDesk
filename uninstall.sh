@@ -31,7 +31,7 @@ done
 [[ "$(id -u)" -eq 0 ]] || die "Please run as root: sudo ./uninstall.sh"
 
 info "Stopping NexDesk services..."
-for svc in nexdesk-gateway nexdesk-browser nexdesk-vnc nexdesk-display; do
+for svc in nexdesk-gateway nexdesk-browser nexdesk-vnc nexdesk-display nexdesk-tz.timer; do
   systemctl stop "$svc" 2>/dev/null || true
   systemctl disable "$svc" 2>/dev/null || true
 done
@@ -40,7 +40,7 @@ systemctl reset-failed 2>/dev/null || true
 ok "Services stopped and disabled."
 
 info "Removing unit files..."
-rm -f /etc/systemd/system/nexdesk-{display,vnc,browser,gateway}.service
+rm -f /etc/systemd/system/nexdesk-{display,vnc,browser,gateway}.service /etc/systemd/system/nexdesk-tz.{service,timer}
 systemctl daemon-reload
 ok "Unit files removed."
 

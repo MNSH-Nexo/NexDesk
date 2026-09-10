@@ -477,13 +477,29 @@ fi
 
 # Provision launcher scripts into $NX_DIR/bin (e.g. the PulseAudio daemon helper).
 install -d -o root -g root "$NX_DIR/bin"
-for _nxbin in "$REPO_DIR/bin/nexdesk-audio.sh" "$REPO_DIR/bin/nexdesk-display.sh" "$REPO_DIR/bin/nexdesk-resize.sh" "$REPO_DIR/bin/nexdesk-devicefit-install.sh"; do
+for _nxbin in "$REPO_DIR/bin/nexdesk-audio.sh" "$REPO_DIR/bin/nexdesk-display.sh" "$REPO_DIR/bin/nexdesk-resize.sh" "$REPO_DIR/bin/nexdesk-devicefit-install.sh" "$REPO_DIR/bin/nexdesk-sync-tz.sh"; do
   [[ -f "$_nxbin" ]] && install -m 0755 -o root -g root "$_nxbin" "$NX_DIR/bin/" 2>/dev/null || true
 done
 # Point the resolution-aware controllers at the target install dir (harmless
 # when $NX_DIR is already the default /opt/nexdesk).
 sed -i "s#/opt/nexdesk#$NX_DIR#g" "$NX_DIR/bin/nexdesk-display.sh" "$NX_DIR/bin/nexdesk-resize.sh" 2>/dev/null || true
 chmod 0755 "$NX_DIR/bin/nexdesk-display.sh" "$NX_DIR/bin/nexdesk-resize.sh" 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# Server clock
+#    Chrome reports the host's time zone to every website it visits, so a
+#    server hosted in one country while its clock says UTC is an easy mismatch
+#    to spot. Align the system time zone with the country this machine is in
+#    *before* the services (and therefore Chrome) start further below, so the
+#    browser never comes up on the wrong clock. NX_TZ=off leaves the clock
+#    alone, and NX_TZ=<Area/City> pins a specific zone.
+# ---------------------------------------------------------------------------
+if [[ "${NX_TZ:-auto}" == "off" || "${NX_TZ:-auto}" == "0" ]]; then
+  info "Server time zone left untouched (NX_TZ=off)."
+elif [[ -x "$NX_DIR/bin/nexdesk-sync-tz.sh" ]]; then
+  NX_TZ="${NX_TZ:-auto}" "$NX_DIR/bin/nexdesk-sync-tz.sh" || true
+  ok "Server time zone matched to where this machine is."
+fi
 
 # ---------------------------------------------------------------------------
 # 4. Secrets
@@ -727,6 +743,39 @@ WantedBy=multi-user.target
 UNIT
 
 # ---------------------------------------------------------------------------
+# Server clock guard: the time zone is re-checked on a schedule so a machine
+# that is moved later (or re-imaged elsewhere) drifts back to the right country
+# on its own. The check is a no-op while the zone already matches its location.
+# ---------------------------------------------------------------------------
+if [[ "${NX_TZ:-auto}" != "off" && "${NX_TZ:-auto}" != "0" ]]; then
+cat > /etc/systemd/system/nexdesk-tz.service <<UNIT
+[Unit]
+Description=NexDesk time zone sync (match the server's location)
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+Environment=NX_TZ=${NX_TZ:-auto}
+ExecStart=${NX_DIR}/bin/nexdesk-sync-tz.sh
+UNIT
+
+cat > /etc/systemd/system/nexdesk-tz.timer <<UNIT
+[Unit]
+Description=NexDesk time zone sync (daily)
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=12h
+Persistent=true
+[Install]
+WantedBy=timers.target
+UNIT
+ok "Time zone check installed (runs daily)."
+else
+  systemctl disable -q --now nexdesk-tz.timer >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/nexdesk-tz.service /etc/systemd/system/nexdesk-tz.timer
+fi
+
+# ---------------------------------------------------------------------------
 # Device-fit (enabled by default, matching the reference gateway): the display
 # is launched through the resolution-aware controller so a connecting device
 # reshapes the desktop to fill its own screen edge-to-edge, and the in-viewer
@@ -755,6 +804,11 @@ for svc in nexdesk-display nexdesk-vnc nexdesk-audio nexdesk-browser nexdesk-gat
   systemctl restart "$svc"
 done
 ok "Services started (display, vnc, audio, browser, gateway)."
+
+if [[ -f /etc/systemd/system/nexdesk-tz.timer ]]; then
+  systemctl enable -q --now nexdesk-tz.timer 2>/dev/null || true
+  ok "Daily server-clock check scheduled."
+fi
 
 # Register the `nexdesk` admin-menu command (idempotent).
 if [[ -f "$NX_DIR/nexdesk-admin.sh" ]]; then
